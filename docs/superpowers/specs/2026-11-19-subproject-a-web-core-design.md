@@ -65,7 +65,7 @@ hisaabcheck/
 `processBill` is a state machine that returns steps the UI can show, and it pauses for consent when needed.
 
 1. **Availability.** `available` → step 2. `downloadable`/`downloading` → the UI shows the "Download on-device AI" button (download needs a user click); this bill goes to step 4 with reason `no_device_model`. `unavailable` → step 4, reason `no_device_model`. `routing_mode = cloud_only` → step 4, reason `cloud_only_mode`.
-2. **Device read + OCR in parallel.** Device read on the raw image with an 8 s timeout. OCR starts at the same moment. The prompt is chosen by `extraction_prompt_version`; a totals-only prompt is used when the bill has more than `max_device_line_items` items (first pass asks for an item count, or the model returns `itemCount` with totals only; decided when locking the prompt on day 1).
+2. **Device read + OCR in parallel.** Device read on the raw image with an 8 s timeout. OCR starts at the same moment. The prompt is chosen by `extraction_prompt_version`; in a single call the device prompt always asks for totals plus `itemCount`, and asks for `items` only "if there are `max_device_line_items` or fewer". If `items` is missing, the totals-only check is used.
 3. **Checks.** Parse JSON, run checks, compute confidence (section 5). Pass → save with path `device`. Fail → reason is the first failed hard check, else `low_confidence`, `device_timeout`, `device_error` or `invalid_json`. In `device_only` mode → save as `manual_entry` with the device fields and stop.
 4. **Redact.** Wait for OCR. Shield finds GSTINs first (never redacted), then PII matches; boxes are padded by 4 px and painted black. If the uncertainty detector fires → return `needsConsent` with the redacted image; resume on user choice. "Keep on device" → save as `manual_entry`.
 5. **Cloud read** on the redacted image using `cloud_model`, then checks again. Save with path `cloud`, keeping the escalation reason. Checks failing again → saved as `draft` with red marks (the CA fixes it in the review screen in sub-project B).
@@ -127,7 +127,7 @@ Accessibility (NFR-10): labelled controls, keyboard-usable preview drawing alter
 | Device read throws / > 8 s | reason `device_error` / `device_timeout` → cloud path (or `manual_entry` in `device_only`) |
 | Model returns invalid JSON | tolerant parse (strip fences, trailing commas); else reason `invalid_json` → escalate |
 | Cloud call fails (network, App Check, quota) | save as `manual_entry` with reason `cloud_error` and any device fields; card shows Retry while the image is still in memory |
-| OCR fails | cloud path is blocked (cannot prove redaction) → preview forced with the whole image unredacted shown as a warning; only "Keep on device" is allowed |
+| OCR fails | cloud path is blocked, since redaction cannot be proven → saved as `manual_entry` with reason `ocr_error` and any device fields; card explains why |
 | Remote Config fetch fails | bundled defaults; minimum fetch interval 30 s so a live switch is picked up for the next bill |
 | Firestore write fails / offline | Firestore persistent local cache queues writes; card shows "Will sync" |
 

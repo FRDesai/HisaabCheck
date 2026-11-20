@@ -1,12 +1,22 @@
-import { useNavigate } from 'react-router-dom';
+import { useState } from 'react';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { signOut } from 'firebase/auth';
 import { auth } from '../../firebase';
-import { recordConsent } from '../../adapters/store';
+import { CONSENT_VERSION, recordConsent } from '../../adapters/store';
 import { useAuth } from './AuthProvider';
 
 export default function ConsentPage() {
-  const { user, refresh } = useAuth();
+  const { user, profile, refresh } = useAuth();
   const nav = useNavigate();
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (profile?.consentVersion === CONSENT_VERSION) return <Navigate to="/shops" replace />;
+
+  async function agree() {
+    setSaving(true); setError(null);
+    try { await recordConsent(user!.uid); await refresh(); nav('/shops'); }
+    catch { setError('Could not save your consent. Please try again.'); setSaving(false); }
+  }
   return (
     <main className="max-w-xl mx-auto p-8 space-y-4">
       <h1 className="text-2xl font-bold">Before you start</h1>
@@ -17,9 +27,10 @@ export default function ConsentPage() {
         <li>Photos are not stored unless you turn that on for a shop. Data is kept in India (Mumbai).</li>
         <li>You can withdraw consent by signing out and asking us to delete your data.</li>
       </ul>
+      {error && <p role="alert" className="text-red-700 text-sm">{error}</p>}
       <div className="flex gap-3">
-        <button className="px-5 py-3 rounded-lg bg-emerald-700 text-white"
-          onClick={async () => { await recordConsent(user!.uid); await refresh(); nav('/shops'); }}>I agree</button>
+        <button disabled={saving} className="px-5 py-3 rounded-lg bg-emerald-700 text-white disabled:opacity-60" onClick={agree}>
+          {saving ? 'Saving…' : 'I agree'}</button>
         <button className="px-5 py-3 rounded-lg border" onClick={() => signOut(auth)}>Not now</button>
       </div>
     </main>

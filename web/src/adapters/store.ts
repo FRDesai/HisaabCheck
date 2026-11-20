@@ -1,5 +1,5 @@
 import type { User } from 'firebase/auth';
-import { addDoc, collection, doc, getDoc, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where, writeBatch, limit } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where, limit } from 'firebase/firestore';
 import { ref, uploadBytes } from 'firebase/storage';
 import { db, storage } from '../firebase';
 import type { Checks, Extraction, ProcessedBill } from '../core/types';
@@ -14,11 +14,16 @@ export async function ensureUser(u: User): Promise<UserDoc> {
   const snap = await getDoc(r);
   if (snap.exists()) return snap.data() as UserDoc;
   const d: UserDoc = { role: 'ca', name: u.displayName ?? '', email: u.email ?? '' };
-  await setDoc(r, { ...d, createdAt: serverTimestamp() });
+  // Do not wait for the server ack: the persistent cache queues the write offline.
+  setDoc(r, { ...d, createdAt: serverTimestamp() }).catch(() => {});
   return d;
 }
-export const recordConsent = (uid: string) =>
-  updateDoc(doc(db, 'users', uid), { consentVersion: CONSENT_VERSION, consentAt: serverTimestamp() });
+export async function recordConsent(uid: string): Promise<void> {
+  const r = doc(db, 'users', uid);
+  const snap = await getDoc(r);
+  if (snap.exists() && snap.data().consentVersion === CONSENT_VERSION) return; // keep the original consent time
+  await updateDoc(r, { consentVersion: CONSENT_VERSION, consentAt: serverTimestamp() });
+}
 
 export function watchShops(caUid: string, cb: (s: Shop[]) => void) {
   return onSnapshot(query(collection(db, 'shops'), where('caUid', '==', caUid)), (q) =>
@@ -28,21 +33,35 @@ export async function createShop(caUid: string, s: Omit<Shop, 'id' | 'caUid'>) {
   return (await addDoc(collection(db, 'shops'), { ...s, caUid, createdAt: serverTimestamp() })).id;
 }
 
-export async function saveProcessedBill(shop: Shop, caUid: string, p: ProcessedBill): Promise<string> {
+export type SavedBill = { billId: string; synced: Promise<void>; photo: Promise<'stored' | 'skipped' | 'failed'> };
+
+export function saveProcessedBill(shop: Shop, caUid: string, p: ProcessedBill): SavedBill {
   const billRef = doc(collection(db, 'shops', shop.id, 'bills'));
-  let imagePath: string | null = null;
-  if (shop.storeImages && p.redactedImage) {
-    imagePath = `shops/${shop.id}/bills/${billRef.id}.jpg`;
-    await uploadBytes(ref(storage, imagePath), p.redactedImage, { contentType: 'image/jpeg' });
-  }
-  const batch = writeBatch(db);
-  batch.set(billRef, {
-    ...(p.extraction ?? {}), checks: p.checks, status: p.status, route: p.route,
-    ...(imagePath ? { imagePath } : {}), createdAt: serverTimestamp(),
+  // Bill first. Not awaited here: the offline cache queues it; `synced` settles on server ack/refusal.
+  const synced = setDoc(billRef, {
+    ...(p.extraction ?? {}), checks: p.checks, status: p.status, route: p.route, createdAt: serverTimestamp(),
   });
-  batch.set(doc(collection(db, 'routeLogs')), toRouteLog(p, { billId: billRef.id, shopId: shop.id, caUid }, new Date()));
-  void batch.commit(); // offline cache queues it; do not block the UI on the server ack
-  return billRef.id;
+  synced.catch(() => {}); // callers may ignore `synced`; avoid an unhandled rejection
+  // Route log is best-effort telemetry (counts/types only) and never affects the bill.
+  try {
+    setDoc(doc(collection(db, 'routeLogs')), toRouteLog(p, { billId: billRef.id, shopId: shop.id, caUid }, new Date())).catch(() => {});
+  } catch { /* telemetry only */ }
+
+  let photo: Promise<'stored' | 'skipped' | 'failed'> = Promise.resolve('skipped');
+  if (shop.storeImages && p.redactedImage) {
+    const imagePath = `shops/${shop.id}/bills/${billRef.id}.jpg`;
+    const blob = p.redactedImage; // redacted image only
+    photo = (async () => {
+      try {
+        await uploadBytes(ref(storage, imagePath), blob, { contentType: 'image/jpeg' });
+        await updateDoc(billRef, { imagePath });
+        return 'stored' as const;
+      } catch {
+        return 'failed' as const;
+      }
+    })();
+  }
+  return { billId: billRef.id, synced, photo };
 }
 
 export const updateBillFields = (shopId: string, billId: string, e: Extraction, checks: Checks) =>

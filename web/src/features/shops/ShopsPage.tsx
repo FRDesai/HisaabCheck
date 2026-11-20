@@ -9,13 +9,17 @@ export default function ShopsPage() {
   const [shops, setShops] = useState<Shop[]>([]);
   const [form, setForm] = useState({ shopName: '', gstin: '', state: '', storeImages: false });
   useEffect(() => watchShops(user!.uid, setShops), [user]);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const gstinOk = form.gstin === '' || isValidGstin(form.gstin.toUpperCase());
 
-  async function add(e: FormEvent) {
+  function add(e: FormEvent) {
     e.preventDefault();
-    if (!form.shopName || !gstinOk) return;
-    await createShop(user!.uid, { ...form, gstin: form.gstin.toUpperCase() });
-    setForm({ shopName: '', gstin: '', state: '', storeImages: false });
+    if (!form.shopName || !gstinOk || submitting) return;
+    setSubmitting(true); setError(null);
+    const pending = createShop(user!.uid, { ...form, gstin: form.gstin.toUpperCase() });
+    setForm({ shopName: '', gstin: '', state: '', storeImages: false }); // do not wait for the server ack
+    pending.catch(() => setError('Could not add the shop. Please try again.')).finally(() => setSubmitting(false));
   }
 
   return (
@@ -33,12 +37,13 @@ export default function ShopsPage() {
       <form onSubmit={add} className="bg-white p-6 rounded-lg border space-y-3">
         <h2 className="text-lg font-semibold">Add client shop</h2>
         <label className="block">Shop name<input required className="mt-1 w-full border rounded p-2" value={form.shopName} onChange={(e) => setForm({ ...form, shopName: e.target.value })} /></label>
-        <label className="block">GSTIN<input className={`mt-1 w-full border rounded p-2 ${gstinOk ? '' : 'border-red-600'}`} value={form.gstin} onChange={(e) => setForm({ ...form, gstin: e.target.value })} aria-invalid={!gstinOk} /></label>
-        {!gstinOk && <p className="text-red-700 text-sm">This GSTIN fails the format or checksum check.</p>}
+        <label className="block">GSTIN<input className={`mt-1 w-full border rounded p-2 ${gstinOk ? '' : 'border-red-600'}`} value={form.gstin} onChange={(e) => setForm({ ...form, gstin: e.target.value })} aria-invalid={!gstinOk} aria-describedby={gstinOk ? undefined : 'gstin-error'} /></label>
+        {!gstinOk && <p id="gstin-error" className="text-red-700 text-sm">This GSTIN fails the format or checksum check.</p>}
         <label className="block">State<input className="mt-1 w-full border rounded p-2" value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value })} /></label>
         <label className="flex items-center gap-2"><input type="checkbox" checked={form.storeImages} onChange={(e) => setForm({ ...form, storeImages: e.target.checked })} />
           Store redacted bill photos (off by default)</label>
-        <button className="px-5 py-3 rounded-lg bg-emerald-700 text-white">Add shop</button>
+        {error && <p role="alert" className="text-red-700 text-sm">{error}</p>}
+        <button disabled={submitting} className="px-5 py-3 rounded-lg bg-emerald-700 text-white disabled:opacity-60">Add shop</button>
       </form>
     </div>
   );

@@ -26,6 +26,29 @@ describe('parseExtraction', () => {
   it('upper-cases and trims the GSTIN', () => {
     expect(parseExtraction(JSON.stringify({ ...base, supplierGstin: ' 29aagcb7383j1z4 ' }))?.supplierGstin).toBe('29AAGCB7383J1Z4');
   });
+  it('skips null and non-object items without throwing', () => {
+    expect(() => parseExtraction('{"total":5,"items":[null]}')).not.toThrow();
+    expect(parseExtraction('{"total":5,"items":[null]}')?.items).toEqual([]);
+  });
+  it('skips string items and keeps valid object items', () => {
+    expect(() => parseExtraction('{"total":5,"items":["Rice"]}')).not.toThrow();
+    const e = parseExtraction('{"total":5,"items":["Rice", {"description":"Dal","amount":"10"}]}')!;
+    expect(e.items).toHaveLength(1);
+    expect(e.items![0]).toEqual({ description: 'Dal', hsn: '', qty: 0, rate: 0, amount: 10 });
+  });
+  it('parses amounts with a trailing /-', () => {
+    expect(parseExtraction('{"total":"1770/-"}')?.total).toBe(1770);
+    expect(parseExtraction('{"total":"₹1,770/-"}')?.total).toBe(1770);
+  });
+  it('omits itemCount when it is null', () => {
+    expect(parseExtraction('{"total":5,"itemCount":null}')).not.toHaveProperty('itemCount');
+  });
+  it('parses numeric-string itemCount', () => {
+    expect(parseExtraction('{"total":5,"itemCount":"14"}')?.itemCount).toBe(14);
+  });
+  it('omits itemCount when it is not a number', () => {
+    expect(parseExtraction('{"total":5,"itemCount":"many"}')).not.toHaveProperty('itemCount');
+  });
   it('returns null for garbage', () => expect(parseExtraction('sorry, cannot read')).toBeNull());
   it('parses items', () => {
     const e = parseExtraction(JSON.stringify({ ...base, items: [{ description: 'Rice', hsn: '1006', qty: '2', rate: 50, amount: '100' }] }))!;

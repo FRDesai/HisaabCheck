@@ -1,4 +1,4 @@
-import { getGenerativeModel, InferenceMode, type GenerativeModel } from 'firebase/ai';
+import { getGenerativeModel, InferenceMode, InferenceSource, type GenerativeModel } from 'firebase/ai';
 import { ai } from '../firebase';
 import type { Availability, CloudModel, DeviceModel, ImageInput } from '../core/types';
 
@@ -10,7 +10,7 @@ declare global {
     create(opts: object): Promise<{ destroy(): void }>;
   };
 }
-const DEVICE_OPTS = { expectedInputs: [{ type: 'image' as const }], expectedOutputs: [{ type: 'text' as const, languages: ['en'] }] };
+const DEVICE_OPTS = { expectedInputs: [{ type: 'text' as const, languages: ['en'] }, { type: 'image' as const }], expectedOutputs: [{ type: 'text' as const, languages: ['en'] }] };
 
 async function toPart(blob: Blob) {
   const buf = new Uint8Array(await blob.arrayBuffer());
@@ -34,11 +34,14 @@ export const deviceModel: DeviceModel = {
     s.destroy();
   },
   async extract(image: ImageInput, prompt: string) {
+    // Fail closed: without the Prompt API the SDK would silently fall back to the cloud.
+    if (typeof globalThis.LanguageModel === 'undefined') throw new Error('on-device model unavailable');
     deviceGen ??= getGenerativeModel(ai, {
       mode: InferenceMode.ONLY_ON_DEVICE,
       onDeviceParams: { createOptions: DEVICE_OPTS },
     });
     const res = await deviceGen.generateContent([prompt, await toPart(image.blob)]);
+    if (res.response.inferenceSource !== InferenceSource.ON_DEVICE) throw new Error('on-device model unavailable: response not from device');
     return res.response.text();
   },
 };

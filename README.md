@@ -12,7 +12,7 @@ The router is `web/src/core/router/processBill.ts`. For each bill it does this, 
 2. **Device read and OCR in parallel.** OCR (Tesseract.js, in the browser) starts at once, before the device read, so a redaction is ready if the bill has to escalate. The device read has an 8 second timeout (`DEVICE_TIMEOUT_MS`).
 3. **Checks and confidence.** The device answer is parsed and checked (see below). If the answer is not valid JSON, the device times out, or it errors, the bill escalates. If the maths checks pass and the confidence is at or above `confidence_threshold`, the bill is saved as a draft from the device read. The image is not sent to the cloud model; only the extracted fields and a counts-only route log are saved to Firestore.
 4. **Redaction.** On escalation, OCR words go through the privacy shield, and the matched private numbers are painted black on a copy of the image.
-5. **"Send to cloud?" preview.** If the shield is unsure (a label such as "A/C No" with no value found, a partial match, or a low-OCR-confidence word that looks like a number), the user sees the redacted image. They can draw extra black boxes, then send or keep the bill on the device.
+5. **"Send to cloud?" preview.** If the shield is unsure (a label such as "A/C No" with no value found, a partial match, or a low-OCR-confidence word that looks like a number), or OCR read too little of the bill to trust the shield (fewer than `MIN_OCR_WORDS` words, or a median word confidence below `MIN_OCR_MEDIAN_CONFIDENCE`; `web/src/core/shield/adequacy.ts`), the user sees the redacted image before anything is sent. They can draw extra black boxes, then send or keep the bill on the device.
 6. **Cloud read.** Only the redacted JPEG is sent, to the model named by `cloud_model`. The answer is parsed and checked again, and the bill is saved as a draft marked as a cloud read. If the cloud checks fail, the user still sees the result with the failed checks and can edit it.
 
 Checks (`web/src/core/checks/checks.ts`): total (line items or taxable value plus tax equals total, within `total_tolerance_inr`), GSTIN (valid format and checksum), tax split (CGST = SGST within the same state, IGST otherwise, judged from GSTIN state and place of supply), date (valid, not in the future, within 3 years, India time), and required fields. The confidence score is a weighted sum: total 0.35, GSTIN 0.25, tax split 0.15, date 0.10, required fields 0.10, plus 0.05 times the model's own confidence. A bill escalates if the total or GSTIN check fails, or the score is below `confidence_threshold`.
@@ -31,7 +31,7 @@ Every path that ends in **manual entry** (the bill is saved with status `manual_
 
 ## Privacy design
 
-**What is detected and blacked out** (`web/src/core/shield/shield.ts`): PAN, Aadhaar (the 12 digits must pass the Verhoeff checksum), IFSC codes, mobile numbers and labelled landline numbers, and bank account numbers (only when an account label such as "A/C No" is on the same or the previous line). Each match is painted over with padding.
+**What is detected and blacked out** (`web/src/core/shield/shield.ts`): PAN, Aadhaar (the 12 digits, plain or grouped with spaces or hyphens, must pass the Verhoeff checksum), IFSC codes, mobile numbers and labelled landline numbers, and bank account numbers (only when an account label such as "A/C No", "Acc. Number", "ACC#" or "Account Number" is on the same or the previous line). It also hides **possible ID numbers** as a precaution: Aadhaar-shaped numbers that fail the checksum, and PAN or mobile numbers that match only after undoing a common OCR mix-up (O/0, I/1, l/1, S/5, B/8, Z/2). These are shown as "Possible ID number". Each match is painted over with padding.
 
 **GSTINs are deliberately not masked:** words that match the GSTIN pattern are excluded from redaction. They are public identifiers, and the GSTIN is needed to check the bill.
 
@@ -39,17 +39,19 @@ Every path that ends in **manual entry** (the bill is saved with status `manual_
 - The cloud is not called if OCR failed.
 - The cloud is not called if the image to send is the original (when masking is on).
 - The cloud is not called if redaction throws.
+- The cloud is not called without the preview if OCR read too little text to trust the shield.
+- With `mask_pii` off (development builds only) the image sent is not labelled as redacted, so it is never stored.
 - The device adapter refuses to run when Chrome has no on-device model, and rejects any answer whose source is not the device. It never silently uses the cloud.
 - The preview component shows and returns only the redacted image; the original is not available to it.
 
 **OCR download.** OCR runs in the browser, but its worker and English language data are downloaded from a public CDN on first use (no bill data is sent). Self-hosting those files is planned.
 
-**Logging and storage.** Route logs hold counts and types only: path, reason, number of items masked, the types of private numbers found, latency, estimated cost, model name and prompt version. They hold no image and no extracted values. Firestore rules reject any other key in a route log (`firebase/firestore.rules`). A bill photo is stored only if the shop was created with "store images" on, and only the redacted version is uploaded (JPEG, under 3 MB; `firebase/storage.rules`). A bill read fully on the device has no redacted image, so no photo is stored for it.
+**Logging and storage.** Route logs hold counts and types only: path, reason, number of items masked, the types of private numbers found, latency, estimated cost, model name and prompt version. They hold no image and no extracted values. Firestore rules reject any other key in a route log, check each field's type and range, require the server's time as `createdAt`, and accept a log only for a shop the writer owns (`firebase/firestore.rules`). A bill photo is stored only if the shop was created with "store images" on, and only the redacted version is uploaded (JPEG, under 3 MB; `firebase/storage.rules`). A bill read fully on the device has no redacted image, so no photo is stored for it.
 
 **Limits, stated plainly:**
 - The shield is pattern-based. It can miss private numbers in unusual formats, layouts or poor OCR.
 - The leak check (see the accuracy tool below) re-reads the redacted image with the same detector. It shows that no private number the detector can recognise survived redaction. It does not show that every private number on the bill was found.
-- The human preview covers cases the shield flags as uncertain. It cannot help when the shield is confidently wrong.
+- The human preview covers cases the shield flags as uncertain and bills where OCR read too little text. It cannot help when the shield is confidently wrong on a well-read bill.
 
 ## Remote Config keys
 
@@ -102,8 +104,8 @@ Hosting deploys from `web/` with `npm run deploy` (it runs the build, then `fire
 
 Run from `web/`.
 
-- `npm test` runs the unit and component-logic suites with Vitest: 16 files, 145 tests in the last run. They cover config parsing, GSTIN/Aadhaar checksums, shield test vectors, redaction planning, extraction parsing, the checks and score, the router (`processBill`, with fake adapters), route logs and stats, accuracy comparison and summary, the Firebase AI adapter guards, the store adapter, and the rule that the automatic inference modes are not used.
-- `npm run test:rules` runs the Firestore rules tests against the Firebase emulator (needs Java; 1 file, 5 tests in the last run). It covers owner-only reads and writes of shops and bills, and route logs being append-only, owner-only and free of extra keys. The Storage rules have no automated test.
+- `npm test` runs the unit and component-logic suites with Vitest: 20 files, 195 tests in the last run. They cover config parsing, GSTIN/Aadhaar checksums, shield test vectors, redaction planning, extraction parsing, the checks and score, the router (`processBill`, with fake adapters), route logs and stats, accuracy comparison and summary, the Firebase AI adapter guards, the store adapter, and the rule that the automatic inference modes are not used.
+- `npm run test:rules` runs the Firestore rules tests against the Firebase emulator (needs Java; 1 file, 14 tests in the last run). It covers owner-only reads and writes of shops and bills, users not being able to make themselves admin, and route logs being append-only, owner-only, free of extra keys, type-checked, server-timed and tied to a shop the writer owns. The Storage rules have no automated test.
 
 ## Accuracy and leak-check tool
 
@@ -127,16 +129,17 @@ Select the bill images and a file named `truth.json` together. `truth.json` is a
 
 Images with no entry are skipped and listed; entries with no image are listed too. Numbers match within 1 rupee; text matches ignoring case and surrounding spaces.
 
-For each bill the tool runs the device read (if Chrome has the model), then OCR, the shield and redaction, then a cloud read on the redacted image, then re-runs OCR and the shield on the redacted image. Columns in the table and the downloadable CSV:
+For each bill the tool runs the device read (if Chrome has the model), then OCR, the shield and redaction, then a cloud read on the redacted image, then re-runs OCR and the shield on the redacted image. A bill the shield is unsure about, or where OCR read too little text, is **not** sent to the cloud by default (the app would show the preview, and this tool has none); its cloud column shows "skipped (unsure)", it is counted separately and left out of the cloud accuracy average. A default-off checkbox, "Also send unsure bills to the cloud (redacted, no preview)", opts in. Columns in the table and the downloadable CSV:
 
 - device and cloud fields OK: how many of the 7 fields matched truth (`-` if that read did not run or failed), with read time in milliseconds in the CSV.
 - masked: private numbers painted over.
 - leak (`pii_left`): private numbers the detector still finds in the redacted image. `unchecked` if the bill errored before the check.
-- unsure: the shield would have shown the preview.
+- unsure: the app would have shown the preview (shield unsure or too little OCR text).
+- `cloud_skipped` (CSV): the cloud read was skipped because the bill was unsure.
 
 The tool calls the models directly: it bypasses the router and the "Send to cloud?" preview, so its leak count describes the redaction step, not the full production path.
 
-The summary shows device and cloud field accuracy, failed and unsure bills, and the total leak count. It warns if not all bills were leak-checked.
+The summary shows device and cloud field accuracy, failed and unsure bills, skipped cloud reads, and the total leak count. It warns if not all bills were leak-checked.
 
 ## Status
 

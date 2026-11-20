@@ -1,1 +1,6 @@
 /PRD*.md
+node_modules/
+dist/
+.env.local
+*-debug.log
+.firebase/

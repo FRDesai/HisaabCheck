@@ -104,7 +104,7 @@ Hosting deploys from `web/` with `npm run deploy` (it runs the build, then `fire
 
 Run from `web/`.
 
-- `npm test` runs the unit and component-logic suites with Vitest: 20 files, 201 tests in the last run. They cover config parsing, GSTIN/Aadhaar checksums, shield test vectors, redaction planning, extraction parsing, the checks and score, the router (`processBill`, with fake adapters), route logs and stats, accuracy comparison and summary, the Firebase AI adapter guards, the store adapter, and the rule that the automatic inference modes are not used.
+- `npm test` runs the unit and component-logic suites with Vitest: 20 files, 211 tests in the last run. They cover config parsing, GSTIN/Aadhaar checksums, shield test vectors, redaction planning, extraction parsing, the checks and score, the router (`processBill`, with fake adapters), route logs and stats, accuracy comparison and summary, the Firebase AI adapter guards, the store adapter, and the rule that the automatic inference modes are not used.
 - `npm run test:rules` runs the Firestore rules tests against the Firebase emulator (needs Java; 1 file, 14 tests in the last run). It covers owner-only reads and writes of shops and bills, users not being able to make themselves admin, and route logs being append-only, owner-only, free of extra keys, type-checked, server-timed and tied to a shop the writer owns. The Storage rules have no automated test.
 
 ## Accuracy and leak-check tool

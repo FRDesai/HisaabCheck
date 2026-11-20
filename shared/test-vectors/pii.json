@@ -43,5 +43,15 @@
   {"name": "split pan is not excused by a near-mobile after it", "lines": ["PAN: AAPF U0939F Mob: 9845O 12345"], "types": ["POSSIBLE_ID"], "gstinWords": 0, "uncertain": true},
   {"name": "split pan is not excused by a 12-digit near-miss on the next line", "lines": ["PAN: AAPF U0939F", "Ref 2341 2341 2340"], "types": ["POSSIBLE_ID"], "gstinWords": 0, "uncertain": true},
   {"name": "misread aadhaar is not excused by a later aadhaar-shaped number", "lines": ["Aadhaar: 2341 2341 23A6 Ref 2341-2341-2340"], "types": ["POSSIBLE_ID"], "gstinWords": 0, "uncertain": true},
-  {"name": "missing aadhaar is not excused by a phone near-miss on the next line", "lines": ["Aadhaar No: ____", "Call 98450 l2345"], "types": ["POSSIBLE_ID"], "gstinWords": 0, "uncertain": true}
+  {"name": "missing aadhaar is not excused by a phone near-miss on the next line", "lines": ["Aadhaar No: ____", "Call 98450 l2345"], "types": ["POSSIBLE_ID"], "gstinWords": 0, "uncertain": true},
+  {"name": "split pan in short pieces is not excused by a later near-pan code", "lines": ["PAN: AAPFU 093 9F Code MODEL1234X"], "types": ["POSSIBLE_ID"], "gstinWords": 0, "uncertain": true},
+  {"name": "split pan in short pieces is not excused by a near-pan code on the next line", "lines": ["PAN: AAPFU 093 9F", "MODEL1234X Qty 2"], "types": ["POSSIBLE_ID"], "gstinWords": 0, "uncertain": true},
+  {"name": "split pan in short pieces is not excused by a later near-pan", "lines": ["PAN: AAPFU 093 9F Ref ABCDEI234F"], "types": ["POSSIBLE_ID"], "gstinWords": 0, "uncertain": true},
+  {"name": "aadhaar in 3-digit pieces is not excused by a later aadhaar-shaped number", "lines": ["Aadhaar: 234 123 412 346 Ref 2341-2341-2340"], "types": ["POSSIBLE_ID"], "gstinWords": 0, "uncertain": true},
+  {"name": "mobile in short pieces is not excused by a later near-mobile", "lines": ["Mob: 984 501 234 5 Ref 9845O 12345"], "types": ["POSSIBLE_ID"], "gstinWords": 0, "uncertain": true},
+  {"name": "pan label with spaced colon stays certain", "lines": ["PAN No : AAPFU0939F"], "types": ["PAN"], "gstinWords": 0, "uncertain": false},
+  {"name": "bank account and ifsc on one line stay certain", "lines": ["A/c No: 123456789012 IFSC: HDFC0001234"], "types": ["BANK_ACCOUNT", "IFSC"], "gstinWords": 0, "uncertain": false},
+  {"name": "two mobiles after one label stay certain", "lines": ["Mob: +91 98450 12345 / 98450 54321"], "types": ["PHONE", "PHONE"], "gstinWords": 0, "uncertain": false},
+  {"name": "landline then mobile after one label stay certain", "lines": ["Ph: 080-2345 6789, 98450 12345"], "types": ["PHONE", "PHONE"], "gstinWords": 0, "uncertain": false},
+  {"name": "name between contact label and mobile stays certain", "lines": ["Contact: Ravi Kumar 98450 12345"], "types": ["PHONE"], "gstinWords": 0, "uncertain": false}
 ]

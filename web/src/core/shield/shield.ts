@@ -70,8 +70,8 @@ function isNearMobile(original: string): boolean {
   return /[OILSBZ]/.test(original) && alnum.length > 0 && digits / alnum.length >= MIN_NEAR_MOBILE_DIGIT_SHARE;
 }
 
-/** A token that could be (part of) a private number: digit-bearing and 4+ characters. */
-const SUSPICIOUS = (t: string) => t.length >= 4 && /\d/.test(t);
+/** A word that could be (part of) a private number: any digit at all (OCR may split a number into short pieces). */
+const SUSPICIOUS = (t: string) => /\d/.test(t);
 
 export function runShield(words: OcrWord[], consentOcrThreshold: number): ShieldResult {
   const lines = buildLines(words);

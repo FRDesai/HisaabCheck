@@ -23,3 +23,20 @@ describe('runChecks vectors', () => {
     });
   }
 });
+
+describe('date check in IST', () => {
+  const dateCases: [string, string, string, boolean][] = [
+    ['just after IST midnight accepts today (IST date)', '2026-11-21T02:00:00+05:30', '2026-11-21', true],
+    ['just after IST midnight rejects tomorrow', '2026-11-21T02:00:00+05:30', '2026-11-22', false],
+    ['exact 3-year boundary accepted', '2026-11-20T10:00:00+05:30', '2023-11-20', true],
+    ['older than 3 years rejected', '2026-11-20T10:00:00+05:30', '2023-11-19', false],
+    ['impossible calendar date rejected', '2026-11-20T10:00:00+05:30', '2026-02-30', false],
+  ];
+  for (const [name, now, invoiceDate, expected] of dateCases) {
+    it(name, () => {
+      const bill = { ...base, invoiceDate };
+      const r = runChecks(bill, cfg, new Date(now));
+      expect(r.checks.date).toBe(expected);
+    });
+  }
+});

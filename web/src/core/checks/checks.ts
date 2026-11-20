@@ -20,12 +20,19 @@ function taxSplitOk(e: Extraction, gstinValid: boolean): boolean {
   return allZero || (sameState ? split : igstOnly);
 }
 
+const IST_OFFSET_MS = 5.5 * 3600e3;
+
+/** IST calendar date (YYYY-MM-DD) for the given instant. */
+function istDate(now: Date): string {
+  return new Date(now.getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
 function dateOk(d: string, today: Date): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
   const t = new Date(`${d}T00:00:00Z`);
   if (Number.isNaN(t.getTime()) || t.toISOString().slice(0, 10) !== d) return false;
-  const todayStr = today.toISOString().slice(0, 10);
-  const minStr = `${today.getUTCFullYear() - 3}${todayStr.slice(4)}`;
+  const todayStr = istDate(today);
+  const minStr = `${Number(todayStr.slice(0, 4)) - 3}${todayStr.slice(4)}`;
   return d <= todayStr && d >= minStr;
 }
 

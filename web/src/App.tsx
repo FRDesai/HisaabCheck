@@ -1,11 +1,23 @@
 import { lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider } from './features/auth/AuthProvider';
+import { RequireAuth } from './features/auth/RequireAuth';
+import LoginPage from './features/auth/LoginPage';
+import ConsentPage from './features/auth/ConsentPage';
+import Layout from './features/Layout';
+import ShopsPage from './features/shops/ShopsPage';
 const AccuracyPage = import.meta.env.DEV ? lazy(() => import('./dev/accuracy/AccuracyPage')) : null;
+
 export default function App() {
   return (
-    <BrowserRouter><Suspense fallback={null}><Routes>
+    <AuthProvider><BrowserRouter><Suspense fallback={null}><Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/consent" element={<RequireAuth consent={false}><ConsentPage /></RequireAuth>} />
+      <Route element={<RequireAuth><Layout /></RequireAuth>}>
+        <Route path="/shops" element={<ShopsPage />} />
+      </Route>
       {AccuracyPage && <Route path="/dev/accuracy" element={<AccuracyPage />} />}
-      <Route path="*" element={<p className="p-6">HisaabCheck</p>} />
-    </Routes></Suspense></BrowserRouter>
+      <Route path="*" element={<Navigate to="/shops" replace />} />
+    </Routes></Suspense></BrowserRouter></AuthProvider>
   );
 }

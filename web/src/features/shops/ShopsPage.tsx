@@ -1,0 +1,45 @@
+import { useEffect, useState, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
+import { useAuth } from '../auth/AuthProvider';
+import { createShop, watchShops, type Shop } from '../../adapters/store';
+import { isValidGstin } from '../../core/shield/gstin';
+
+export default function ShopsPage() {
+  const { user } = useAuth();
+  const [shops, setShops] = useState<Shop[]>([]);
+  const [form, setForm] = useState({ shopName: '', gstin: '', state: '', storeImages: false });
+  useEffect(() => watchShops(user!.uid, setShops), [user]);
+  const gstinOk = form.gstin === '' || isValidGstin(form.gstin.toUpperCase());
+
+  async function add(e: FormEvent) {
+    e.preventDefault();
+    if (!form.shopName || !gstinOk) return;
+    await createShop(user!.uid, { ...form, gstin: form.gstin.toUpperCase() });
+    setForm({ shopName: '', gstin: '', state: '', storeImages: false });
+  }
+
+  return (
+    <div className="grid gap-8 md:grid-cols-2">
+      <section>
+        <h1 className="text-2xl font-bold mb-4">Client shops</h1>
+        {shops.length === 0 && <p className="text-slate-600">No shops yet. Add your first client.</p>}
+        <ul className="space-y-2">
+          {shops.map((s) => (
+            <li key={s.id}><Link className="block p-4 bg-white rounded-lg border hover:border-emerald-600" to={`/shops/${s.id}/upload`}>
+              <span className="font-semibold">{s.shopName}</span> <span className="text-slate-500 text-sm">{s.gstin}</span></Link></li>
+          ))}
+        </ul>
+      </section>
+      <form onSubmit={add} className="bg-white p-6 rounded-lg border space-y-3">
+        <h2 className="text-lg font-semibold">Add client shop</h2>
+        <label className="block">Shop name<input required className="mt-1 w-full border rounded p-2" value={form.shopName} onChange={(e) => setForm({ ...form, shopName: e.target.value })} /></label>
+        <label className="block">GSTIN<input className={`mt-1 w-full border rounded p-2 ${gstinOk ? '' : 'border-red-600'}`} value={form.gstin} onChange={(e) => setForm({ ...form, gstin: e.target.value })} aria-invalid={!gstinOk} /></label>
+        {!gstinOk && <p className="text-red-700 text-sm">This GSTIN fails the format or checksum check.</p>}
+        <label className="block">State<input className="mt-1 w-full border rounded p-2" value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value })} /></label>
+        <label className="flex items-center gap-2"><input type="checkbox" checked={form.storeImages} onChange={(e) => setForm({ ...form, storeImages: e.target.checked })} />
+          Store redacted bill photos (off by default)</label>
+        <button className="px-5 py-3 rounded-lg bg-emerald-700 text-white">Add shop</button>
+      </form>
+    </div>
+  );
+}

@@ -6,6 +6,7 @@ import LoginPage from './features/auth/LoginPage';
 import ConsentPage from './features/auth/ConsentPage';
 import Layout from './features/Layout';
 import ShopsPage from './features/shops/ShopsPage';
+import UploadPage from './features/upload/UploadPage';
 const AccuracyPage = import.meta.env.DEV ? lazy(() => import('./dev/accuracy/AccuracyPage')) : null;
 
 export default function App() {
@@ -15,6 +16,7 @@ export default function App() {
       <Route path="/consent" element={<RequireAuth consent={false}><ConsentPage /></RequireAuth>} />
       <Route element={<RequireAuth><Layout /></RequireAuth>}>
         <Route path="/shops" element={<ShopsPage />} />
+        <Route path="/shops/:shopId/upload" element={<UploadPage />} />
       </Route>
       {AccuracyPage && <Route path="/dev/accuracy" element={<AccuracyPage />} />}
       <Route path="*" element={<Navigate to="/shops" replace />} />

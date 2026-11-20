@@ -3,7 +3,7 @@ import { summarize, type AccuracyRow } from '../../src/core/accuracy/summary';
 
 const sel = { scored: 0, skippedNoTruth: [], truthWithoutFile: [] };
 const row = (o: Partial<AccuracyRow> = {}): AccuracyRow => ({
-  file: 'a.jpg', status: 'ok', deviceOk: 7, deviceMs: 10, cloudOk: 7, cloudMs: 10, piiMasked: 2, piiLeft: 0, uncertain: false, ...o,
+  file: 'a.jpg', status: 'ok', deviceOk: 7, deviceMs: 10, cloudOk: 7, cloudMs: 10, piiMasked: 2, piiLeft: 0, uncertain: false, cloudSkipped: false, ...o,
 });
 
 describe('summarize', () => {
@@ -46,4 +46,17 @@ describe('summarize', () => {
     expect(s.leakedBills).toBe(2);
     expect(s.unsure).toBe(1);
   });
+  it('counts skipped cloud reads separately from failures and leaves them out of the cloud average', () => {
+    const s = summarize([
+      row({ cloudOk: 7 }),
+      row({ cloudOk: null, cloudMs: null, cloudSkipped: true, uncertain: true }),
+      row({ cloudOk: null, cloudMs: null, error: 'cloud: net' }),
+    ], 7, sel);
+    expect(s.cloudSkipped).toBe(1);
+    expect(s.cloudBills).toBe(1);
+    expect(s.cloudPct).toBe(100);
+    expect(s.failed).toBe(1);
+  });
+  it('reports zero skipped when nothing was skipped', () => expect(summarize([row()], 7, sel).cloudSkipped).toBe(0));
 });
+

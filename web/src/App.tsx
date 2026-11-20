@@ -8,11 +8,12 @@ import Layout from './features/Layout';
 import ShopsPage from './features/shops/ShopsPage';
 import UploadPage from './features/upload/UploadPage';
 import DashboardPage from './features/dashboard/DashboardPage';
+import ErrorBoundary from './features/ErrorBoundary';
 const AccuracyPage = import.meta.env.DEV ? lazy(() => import('./dev/accuracy/AccuracyPage')) : null;
 
 export default function App() {
   return (
-    <AuthProvider><BrowserRouter><Suspense fallback={null}><Routes>
+    <ErrorBoundary><AuthProvider><BrowserRouter><Suspense fallback={null}><Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/consent" element={<RequireAuth consent={false}><ConsentPage /></RequireAuth>} />
       <Route element={<RequireAuth><Layout /></RequireAuth>}>
@@ -22,6 +23,6 @@ export default function App() {
       </Route>
       {AccuracyPage && <Route path="/dev/accuracy" element={<AccuracyPage />} />}
       <Route path="*" element={<Navigate to="/shops" replace />} />
-    </Routes></Suspense></BrowserRouter></AuthProvider>
+    </Routes></Suspense></BrowserRouter></AuthProvider></ErrorBoundary>
   );
 }

@@ -32,7 +32,7 @@ export default function BillCard({ job, shopId, onRetry, onRetrySave, onConsent 
         <div className="mt-2 text-sm">
           {job.sync === 'pending' && <p role="status" className="text-slate-600">Will sync when online</p>}
           {job.sync === 'saved' && <p role="status" className="text-emerald-800">Saved</p>}
-          {job.sync === 'failed' && <div role="alert" className="text-red-700">Not saved — check your connection and retry{' '}
+          {job.sync === 'failed' && <div role="alert" className="text-red-700">Not saved — the server refused this bill. Retry, or sign out and in again.{' '}
             <button className="underline" onClick={onRetrySave} aria-label={`Retry save for ${job.file.name}`}>Retry save</button></div>}
           {job.photo === 'failed' && <p role="status" className="text-amber-800">Photo not stored</p>}
         </div>

@@ -7,6 +7,7 @@ import { loadConfig } from '../../adapters/remoteConfig';
 import { devicePrompt, cloudPrompt } from '../../core/extract/prompts';
 import { parseExtraction } from '../../core/extract/parse';
 import { runShield } from '../../core/shield/shield';
+import { ocrAdequate } from '../../core/shield/adequacy';
 import { planRedaction } from '../../core/redact/planRedaction';
 import { compareFields, type Truth } from '../../core/accuracy/compareFields';
 import { summarize, type AccuracyRow, type Selection } from '../../core/accuracy/summary';
@@ -20,9 +21,11 @@ export default function AccuracyPage() {
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState('');
   const [selection, setSelection] = useState<Selection | null>(null);
+  // Off by default: unsure bills would get a human preview in the app, and this tool has none.
+  const [sendUnsure, setSendUnsure] = useState(false);
   const running = useRef(false);
 
-  async function run(files: FileList) {
+  async function run(files: FileList, includeUnsure: boolean) {
     if (running.current) { setMessage('A run is already in progress.'); return; }
     running.current = true;
     setMessage('');
@@ -51,7 +54,7 @@ export default function AccuracyPage() {
       const out: AccuracyRow[] = [];
       for (const f of toScore) {
         setBusy(f.name);
-        const row: AccuracyRow = { file: f.name, status: 'ok', deviceOk: null, deviceMs: null, cloudOk: null, cloudMs: null, piiMasked: 0, piiLeft: null, uncertain: false };
+        const row: AccuracyRow = { file: f.name, status: 'ok', deviceOk: null, deviceMs: null, cloudOk: null, cloudMs: null, piiMasked: 0, piiLeft: null, uncertain: false, cloudSkipped: false };
         const notes: string[] = [];
         try {
           const img = await resizeImage(f);
@@ -65,12 +68,18 @@ export default function AccuracyPage() {
           const shield = runShield(words, cfg.consentOcrThreshold);
           const plan = planRedaction(words, shield, img.width, img.height);
           row.piiMasked = plan.piiMasked;
-          row.uncertain = shield.uncertain;
+          // Same rule as the app: an unsure shield OR too little OCR text would need a human preview.
+          row.uncertain = shield.uncertain || !ocrAdequate(words);
           const redacted = await canvasPainter.paint(img.blob, plan.boxes);
-          const t2 = performance.now();
-          try { row.cloudOk = Object.values(compareFields(truth[f.name], parseExtraction(await cloudModel.extract({ ...img, blob: redacted }, cloudPrompt(cfg), cfg.cloudModel)))).filter(Boolean).length; }
-          catch (e) { notes.push(`cloud: ${errMsg(e)}`); }
-          row.cloudMs = row.cloudOk === null ? null : performance.now() - t2;
+          if (redacted === img.blob) throw new Error('painter returned the original image');
+          if (row.uncertain && !includeUnsure) {
+            row.cloudSkipped = true; // no preview here, so do not send it
+          } else {
+            const t2 = performance.now();
+            try { row.cloudOk = Object.values(compareFields(truth[f.name], parseExtraction(await cloudModel.extract({ ...img, blob: redacted }, cloudPrompt(cfg), cfg.cloudModel)))).filter(Boolean).length; }
+            catch (e) { notes.push(`cloud: ${errMsg(e)}`); }
+            row.cloudMs = row.cloudOk === null ? null : performance.now() - t2;
+          }
           row.piiLeft = runShield(await tesseractOcr.recognize(redacted), cfg.consentOcrThreshold).matches.length;
         } catch (e) {
           row.status = 'error';
@@ -90,8 +99,8 @@ export default function AccuracyPage() {
   }
 
   function downloadCsv() {
-    const head = 'file,status,error,device_fields_ok,device_ms,cloud_fields_ok,cloud_ms,pii_masked,pii_left,uncertain';
-    const body = rows.map((r) => [csvCell(r.file), r.status, csvCell(r.error ?? ''), r.deviceOk ?? '', r.deviceMs === null ? '' : r.deviceMs.toFixed(0), r.cloudOk ?? '', r.cloudMs === null ? '' : r.cloudMs.toFixed(0), r.piiMasked, r.piiLeft ?? '', r.uncertain].join(','));
+    const head = 'file,status,error,device_fields_ok,device_ms,cloud_fields_ok,cloud_ms,cloud_skipped,pii_masked,pii_left,uncertain';
+    const body = rows.map((r) => [csvCell(r.file), r.status, csvCell(r.error ?? ''), r.deviceOk ?? '', r.deviceMs === null ? '' : r.deviceMs.toFixed(0), r.cloudOk ?? '', r.cloudMs === null ? '' : r.cloudMs.toFixed(0), r.cloudSkipped, r.piiMasked, r.piiLeft ?? '', r.uncertain].join(','));
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([[head, ...body].join('\n')], { type: 'text/csv' }));
     a.download = 'accuracy.csv';
@@ -107,7 +116,11 @@ export default function AccuracyPage() {
   return (
     <div className="p-6 space-y-4">
       <h1 className="text-2xl font-bold">Accuracy & leak check (dev only)</h1>
-      <input type="file" multiple accept="image/*,application/json" aria-label="Bills and truth.json" disabled={!!busy} onChange={(e) => e.target.files && run(e.target.files)} />
+      <input type="file" multiple accept="image/*,application/json" aria-label="Bills and truth.json" disabled={!!busy} onChange={(e) => e.target.files && run(e.target.files, sendUnsure)} />
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={sendUnsure} disabled={!!busy} onChange={(e) => setSendUnsure(e.target.checked)} />
+        Also send unsure bills to the cloud (redacted, no preview)
+      </label>
       {message && <p role="alert" className="text-red-600">{message}</p>}
       {busy && <p>Processing {busy}…</p>}
       {selection && <div className="text-sm">
@@ -116,12 +129,12 @@ export default function AccuracyPage() {
         {selection.truthWithoutFile.length > 0 && <p>Truth without file: {selection.truthWithoutFile.join(', ')}</p>}
       </div>}
       <p>Device field accuracy: {fmt(sum.devicePct, sum.deviceBills, 'on-device model not available')} · Cloud field accuracy: {fmt(sum.cloudPct, sum.cloudBills, 'no cloud reads succeeded')}</p>
-      <p>Failed bills: {sum.failed} · Unsure: {sum.unsure}</p>
+      <p>Failed bills: {sum.failed} · Unsure: {sum.unsure} · Cloud read skipped (unsure): {sum.cloudSkipped}</p>
       <p className={leakClass}>{leakText}</p>
       <button className="px-4 py-2 rounded bg-slate-800 text-white" onClick={downloadCsv} disabled={!rows.length}>Download CSV</button>
       <table className="text-sm"><tbody>
         {rows.map((r) => <tr key={r.file} className={r.piiLeft ? 'bg-red-100' : r.status === 'error' ? 'bg-amber-100' : ''}>
-          <td className="pr-4">{r.file}</td><td className="pr-4">dev {r.deviceOk === null ? '-' : `${r.deviceOk}/${FIELDS}`}</td><td className="pr-4">cloud {r.cloudOk === null ? '-' : `${r.cloudOk}/${FIELDS}`}</td>
+          <td className="pr-4">{r.file}</td><td className="pr-4">dev {r.deviceOk === null ? '-' : `${r.deviceOk}/${FIELDS}`}</td><td className="pr-4">cloud {r.cloudSkipped ? 'skipped (unsure)' : r.cloudOk === null ? '-' : `${r.cloudOk}/${FIELDS}`}</td>
           <td className="pr-4">masked {r.piiMasked}</td><td className="pr-4">leak {r.piiLeft === null ? 'unchecked' : r.piiLeft}</td><td className="pr-4">{r.uncertain ? 'unsure' : ''}</td><td>{r.error ?? ''}</td></tr>)}
       </tbody></table>
     </div>

@@ -41,6 +41,8 @@ export const deviceModel: DeviceModel = {
       onDeviceParams: { createOptions: DEVICE_OPTS },
     });
     const res = await deviceGen.generateContent([prompt, await toPart(image.blob)]);
+    // Correctness backstop only, NOT the privacy guard: this runs AFTER the call, so it cannot stop data leaving the device.
+    // The privacy guard is the LanguageModel check above, before the call (plus ONLY_ON_DEVICE mode).
     if (res.response.inferenceSource !== InferenceSource.ON_DEVICE) throw new Error('on-device model unavailable: response not from device');
     return res.response.text();
   },

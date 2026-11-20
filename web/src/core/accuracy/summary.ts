@@ -2,14 +2,16 @@ export type RowStatus = 'ok' | 'error';
 export interface AccuracyRow {
   file: string; status: RowStatus; error?: string;
   deviceOk: number | null; // null = device model did not run or the call failed
-  deviceMs: number | null; cloudOk: number | null; cloudMs: number | null; // null = cloud call failed
+  deviceMs: number | null; cloudOk: number | null; cloudMs: number | null; // null = cloud call failed or was skipped
+  /** true = the cloud read was deliberately skipped because the shield was unsure or OCR read too little (not a failure) */
+  cloudSkipped: boolean;
   piiMasked: number; piiLeft: number | null; // null = leak check did not complete
   uncertain: boolean;
 }
 export interface Selection { scored: number; skippedNoTruth: string[]; truthWithoutFile: string[] }
 export interface Summary {
   devicePct: number | null; deviceBills: number; cloudPct: number | null; cloudBills: number; failed: number;
-  leakChecked: number; leakTotal: number; leakedBills: number; unsure: number; total: number;
+  leakChecked: number; leakTotal: number; leakedBills: number; unsure: number; cloudSkipped: number; total: number;
 }
 
 function pct(values: (number | null)[], fieldsPerBill: number): { pct: number | null; bills: number } {
@@ -31,6 +33,7 @@ export function summarize(rows: AccuracyRow[], fieldsPerBill: number, _selection
     leakTotal: checked.reduce((s, r) => s + (r.piiLeft ?? 0), 0),
     leakedBills: checked.filter((r) => (r.piiLeft ?? 0) > 0).length,
     unsure: rows.filter((r) => r.uncertain).length,
+    cloudSkipped: rows.filter((r) => r.cloudSkipped).length,
     total: rows.length,
   };
 }

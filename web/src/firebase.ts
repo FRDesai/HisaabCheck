@@ -27,4 +27,5 @@ export const storage = getStorage(app);
 export const ai = getAI(app, { backend: new GoogleAIBackend() });
 export const rc = getRemoteConfig(app);
 rc.settings.minimumFetchIntervalMillis = 30_000;
+rc.settings.fetchTimeoutMillis = 3000; // config is loaded before every bill; the SDK default is 60 s
 rc.defaultConfig = DEFAULT_REMOTE_VALUES;

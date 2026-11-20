@@ -8,6 +8,7 @@ import { resizeImage } from '../../adapters/imageResize';
 import { loadConfig } from '../../adapters/remoteConfig';
 import { saveProcessedBill, type SavedBill, type Shop } from '../../adapters/store';
 import { useAuth } from '../auth/AuthProvider';
+import { retryPatch, saveTarget } from './billJob';
 
 export type BillJob = {
   id: string; file: File; originalUrl: string; step: Step | 'queued' | 'error';
@@ -57,7 +58,8 @@ export function useBillProcessor(shop: Shop | null) {
             }),
           });
           // Only the redacted image (inside `result`) reaches the store; the original File never does.
-          const saved = saveProcessedBill(shop, user.uid, result);
+          // After a cascade retry this is the first run's billId, so the same doc is overwritten.
+          const saved = saveProcessedBill(shop, user.uid, result, saveTarget(jobs.current.get(id) ?? job));
           patch(id, { result, billId: saved.billId, consent: undefined, step: 'done' });
           track(id, saved);
         } catch (e) {
@@ -95,8 +97,9 @@ export function useBillProcessor(shop: Shop | null) {
   }, [pump]);
 
   const retry = useCallback((id: string) => {
-    if (jobs.current.get(id)?.step === 'queued') return;
-    patch(id, { step: 'queued', error: undefined, result: undefined, billId: undefined, sync: undefined, photo: undefined });
+    const j = jobs.current.get(id);
+    if (!j || j.step === 'queued') return;
+    patch(id, retryPatch(j));
     queue.current.push(id);
     void pump();
   }, [patch, pump]);

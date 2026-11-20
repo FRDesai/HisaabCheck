@@ -1,0 +1,38 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+    function signedIn() { return request.auth != null; }
+    function uid() { return request.auth.uid; }
+    function isAdmin() {
+      return signedIn() && exists(/databases/$(db)/documents/users/$(uid()))
+        && get(/databases/$(db)/documents/users/$(uid())).data.role == 'admin';
+    }
+    function ownsShop(shopId) {
+      return signedIn() && get(/databases/$(db)/documents/shops/$(shopId)).data.caUid == uid();
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn() && (uid() == userId || isAdmin());
+      allow create: if signedIn() && uid() == userId && request.resource.data.role == 'ca';
+      allow update: if signedIn() && uid() == userId && request.resource.data.role == resource.data.role;
+    }
+
+    match /shops/{shopId} {
+      allow read, delete: if signedIn() && resource.data.caUid == uid();
+      allow create: if signedIn() && request.resource.data.caUid == uid();
+      allow update: if signedIn() && resource.data.caUid == uid() && request.resource.data.caUid == uid();
+
+      match /bills/{billId} {
+        allow read, write: if ownsShop(shopId);
+      }
+    }
+
+    match /routeLogs/{logId} {
+      allow create: if signedIn() && request.resource.data.caUid == uid()
+        && request.resource.data.keys().hasOnly(['billId','shopId','caUid','platform','path','reason','piiMasked',
+             'piiTypes','latencyMs','estCostUsd','modelName','promptVersion','createdAt']);
+      allow read: if signedIn() && (resource.data.caUid == uid() || isAdmin());
+      allow update, delete: if false;
+    }
+  }
+}

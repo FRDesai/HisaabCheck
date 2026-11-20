@@ -1,0 +1,7 @@
+{
+  "indexes": [
+    { "collectionGroup": "routeLogs", "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "caUid", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }] }
+  ],
+  "fieldOverrides": []
+}

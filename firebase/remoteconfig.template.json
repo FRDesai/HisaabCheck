@@ -1,0 +1,13 @@
+{
+  "conditions": [],
+  "parameters": {
+    "routing_mode": { "defaultValue": { "value": "smart" }, "valueType": "STRING", "description": "smart | device_only | cloud_only" },
+    "confidence_threshold": { "defaultValue": { "value": "0.8" }, "valueType": "NUMBER" },
+    "consent_ocr_threshold": { "defaultValue": { "value": "0.6" }, "valueType": "NUMBER" },
+    "total_tolerance_inr": { "defaultValue": { "value": "1" }, "valueType": "NUMBER" },
+    "max_device_line_items": { "defaultValue": { "value": "10" }, "valueType": "NUMBER" },
+    "cloud_model": { "defaultValue": { "value": "gemini-3.1-flash-lite" }, "valueType": "STRING" },
+    "extraction_prompt_version": { "defaultValue": { "value": "v1" }, "valueType": "STRING" },
+    "mask_pii": { "defaultValue": { "value": "true" }, "valueType": "BOOLEAN" }
+  }
+}

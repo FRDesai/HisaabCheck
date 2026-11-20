@@ -1,6 +1,9 @@
 // Pure job-state helpers for useBillProcessor (kept free of React/Firebase so they can be unit-tested).
 
-/** State reset for a cascade retry. The billId is KEPT so the re-run overwrites the same bill doc (no orphan, no second log). */
+/**
+ * State reset for a cascade retry. The billId is KEPT so the re-run overwrites the same bill doc (no orphaned bill).
+ * The re-save still writes a second route log (logs are append-only); the dashboard de-duplicates logs by billId.
+ */
 export function retryPatch(job: { billId?: string }) {
   return { step: 'queued' as const, error: undefined, result: undefined, sync: undefined, photo: undefined, billId: job.billId };
 }

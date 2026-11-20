@@ -24,9 +24,9 @@ export async function recordConsent(u: Pick<User, 'uid' | 'displayName' | 'email
   const consent = { consentVersion: CONSENT_VERSION, consentAt: serverTimestamp() };
   if (!snap.exists()) {
     // ensureUser's create was refused or lost: create the doc now (always as 'ca'; rules allow nothing else).
-    // merge: if the doc does exist on the server after all, this cannot change its role (rules refuse a role change).
-    const d: UserDoc = { role: 'ca', name: u.displayName ?? '', email: u.email ?? '' };
-    await setDoc(r, { ...d, ...consent, createdAt: serverTimestamp() }, { merge: true });
+    // merge, and only role + consent fields: if the local read was stale and the doc exists on the server, this
+    // overwrites none of its other fields (createdAt, name, email) and cannot change its role (rules refuse that).
+    await setDoc(r, { role: 'ca', ...consent }, { merge: true });
     return;
   }
   if (snap.data().consentVersion === CONSENT_VERSION) return; // keep the original consent time

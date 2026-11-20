@@ -37,5 +37,13 @@ describe('runShield vectors', () => {
     const r = runShield(wordsFromLines(['PAN AAPFU0939F Mob 98450 12345 Aadhaar 2341-2341-2346']), 0.6);
     expect(r.matches.map((m) => m.type).sort()).toEqual(['AADHAAR', 'PAN', 'PHONE']);
   });
+  it('a label is not satisfied past a visible digit-bearing word, even by an exact match of its kind', () => {
+    expect(runShield(wordsFromLines(['PAN: 12345 AAPFU0939F']), 0.6).uncertain).toBe(true);
+    expect(runShield(wordsFromLines(['PAN: AAPFU0939F']), 0.6).uncertain).toBe(false);
+  });
+  it('a near-miss satisfies only the label of its own kind', () => {
+    expect(runShield(wordsFromLines(['PAN:', 'Mob: 9845O 12345']), 0.6).uncertain).toBe(true);
+    expect(runShield(wordsFromLines(['Mob:', '9845O 12345']), 0.6).uncertain).toBe(false);
+  });
 });
 

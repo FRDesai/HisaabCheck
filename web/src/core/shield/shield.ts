@@ -70,19 +70,20 @@ function isNearMobile(original: string): boolean {
   return /[OILSBZ]/.test(original) && alnum.length > 0 && digits / alnum.length >= MIN_NEAR_MOBILE_DIGIT_SHARE;
 }
 
-/** Labels a near-miss can satisfy: the value is hidden either way. */
-const NEAR_MISS_LABELS: PiiType[] = ['PAN', 'AADHAAR', 'PHONE'];
+/** A token that could be (part of) a private number: digit-bearing and 4+ characters. */
+const SUSPICIOUS = (t: string) => t.length >= 4 && /\d/.test(t);
 
 export function runShield(words: OcrWord[], consentOcrThreshold: number): ShieldResult {
   const lines = buildLines(words);
   const gstinWords = new Set<number>();
   const claimed = new Set<number>();
   const matches: PiiMatch[] = [];
-  const meta: Array<{ type: PiiType; li: number; start: number }> = [];
+  // kind: which label a match can satisfy. Exact matches use their own type; a POSSIBLE_ID uses the type it nearly is.
+  const meta: Array<{ kind: LabelledType; li: number; start: number }> = [];
   const reasons: string[] = [];
 
   // `searchText`, if given, is a same-length transform of the line (look-alike swaps); `ok` gets the ORIGINAL text.
-  const find = (li: number, re: RegExp, type: PiiType, ok: (m: string) => boolean = () => true, searchText?: string) => {
+  const find = (li: number, re: RegExp, type: PiiType, kind: LabelledType, ok: (m: string) => boolean = () => true, searchText?: string) => {
     const line = lines[li];
     for (const m of (searchText ?? line.text).matchAll(new RegExp(re.source, 'g'))) {
       const idx = wordsIn(line, m.index!, m.index! + m[0].length);
@@ -90,7 +91,7 @@ export function runShield(words: OcrWord[], consentOcrThreshold: number): Shield
       if (idx.some((i) => claimed.has(i) || gstinWords.has(i)) || !ok(original)) continue;
       idx.forEach((i) => claimed.add(i));
       matches.push({ type, wordIndexes: idx });
-      meta.push({ type, li, start: m.index! });
+      meta.push({ kind, li, start: m.index! });
     }
   };
 
@@ -102,31 +103,36 @@ export function runShield(words: OcrWord[], consentOcrThreshold: number): Shield
 
   lines.forEach((line, li) => {
     const prev = lines[li - 1]?.text ?? '';
-    find(li, AADHAAR, 'AADHAAR', (s) => isValidVerhoeff(s.replace(/[\s-]/g, '')));
-    find(li, IFSC, 'IFSC');
-    find(li, PAN, 'PAN');
-    find(li, MOBILE, 'PHONE');
-    if (hasLabel(line.text, 'PHONE')) find(li, LANDLINE, 'PHONE');
-    if (hasLabel(line.text, 'BANK_ACCOUNT') || hasLabel(prev, 'BANK_ACCOUNT')) find(li, BANK, 'BANK_ACCOUNT');
+    find(li, AADHAAR, 'AADHAAR', 'AADHAAR', (s) => isValidVerhoeff(s.replace(/[\s-]/g, '')));
+    find(li, IFSC, 'IFSC', 'IFSC');
+    find(li, PAN, 'PAN', 'PAN');
+    find(li, MOBILE, 'PHONE', 'PHONE');
+    if (hasLabel(line.text, 'PHONE')) find(li, LANDLINE, 'PHONE', 'PHONE');
+    if (hasLabel(line.text, 'BANK_ACCOUNT') || hasLabel(prev, 'BANK_ACCOUNT')) find(li, BANK, 'BANK_ACCOUNT', 'BANK_ACCOUNT');
     // Near-misses, after every exact matcher so a real type always wins. Over-redaction is harmless; a miss is a leak.
-    find(li, AADHAAR, 'POSSIBLE_ID'); // Aadhaar-shaped but failing Verhoeff (valid ones were claimed above)
-    find(li, NEAR_PAN, 'POSSIBLE_ID', isNearPan);
-    find(li, MOBILE, 'POSSIBLE_ID', isNearMobile, toDigits(line.text));
+    find(li, AADHAAR, 'POSSIBLE_ID', 'AADHAAR'); // Aadhaar-shaped but failing Verhoeff (valid ones were claimed above)
+    find(li, NEAR_PAN, 'POSSIBLE_ID', 'PAN', isNearPan);
+    find(li, MOBILE, 'POSSIBLE_ID', 'PHONE', isNearMobile, toDigits(line.text));
   });
 
   const nearMissWords = new Set(matches.filter((m) => m.type === 'POSSIBLE_ID').flatMap((m) => m.wordIndexes));
+  // Unclaimed digit-bearing words of line `li` whose span lies within [from, to): something that may be a missed value.
+  const suspiciousIn = (li: number, from: number, to: number) => (lines[li]?.spans ?? []).some((s) =>
+    s.start >= from && s.end <= to && !claimed.has(s.word) && SUSPICIOUS(lines[li].text.slice(s.start, s.end)));
+
   lines.forEach((line, li) => {
-    // Each label occurrence needs its own value of the SAME type, after it on the line or on the next line.
+    // Each label occurrence needs its own value of the SAME kind, after it on the line or on the next line, and that
+    // value must be the first suspicious thing after the label: a visible digit-bearing word in between means the
+    // label's real value may have been missed, so a later match does not count.
     for (const type of Object.keys(LABELS) as LabelledType[]) {
       const occ = [...line.text.matchAll(new RegExp(LABELS[type].source, 'g'))];
       occ.forEach((o, k) => {
         const from = o.index! + o[0].length;
         const to = occ[k + 1]?.index ?? Infinity;
         const last = k === occ.length - 1;
-        const ok = meta.some(
-          (m) => (m.type === type || (m.type === 'POSSIBLE_ID' && NEAR_MISS_LABELS.includes(type)))
-            && ((m.li === li && m.start >= from && m.start < to) || (last && m.li === li + 1)),
-        );
+        const ok = meta.some((m) => m.kind === type && (
+          (m.li === li && m.start >= from && m.start < to && !suspiciousIn(li, from, m.start))
+          || (last && m.li === li + 1 && !suspiciousIn(li, from, Infinity) && !suspiciousIn(li + 1, 0, m.start))));
         if (!ok) reasons.push(`label_without_value:${li}`);
       });
     }

@@ -110,7 +110,8 @@ describe('recordConsent', () => {
     expect(m.setDoc).toHaveBeenCalledTimes(1);
     const [ref, data] = m.setDoc.mock.calls[0];
     expect(ref.path).toMatch(/(^|\/)users\/u1$/);
-    expect(data).toEqual({ role: 'ca', name: 'Asha', email: 'a@example.com', consentVersion: CONSENT_VERSION, consentAt: 'TS', createdAt: 'TS' });
+    expect(data).toEqual({ role: 'ca', consentVersion: CONSENT_VERSION, consentAt: 'TS' });
+    expect(m.setDoc.mock.calls[0][2]).toEqual({ merge: true });
   });
   it('adds consent to an existing doc without touching the role', async () => {
     m.getDoc.mockResolvedValue(snap({ role: 'admin', name: 'X' }));

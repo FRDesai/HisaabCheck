@@ -39,5 +39,9 @@
   {"name": "gstin next to near-pan", "lines": ["GSTIN 27AAPFU0939F1ZV PAN ABCDEI234F"], "types": ["POSSIBLE_ID"], "gstinWords": 1, "uncertain": false},
   {"name": "ordinary ten-letter word is not an id", "lines": ["DISCOUNTED items"], "types": [], "gstinWords": 0, "uncertain": false},
   {"name": "invoice number is not a near-pan", "lines": ["Invoice INV2026001"], "types": [], "gstinWords": 0, "uncertain": false},
-  {"name": "word with look-alike letters next to a number is not a mobile", "lines": ["BILLS 12345"], "types": [], "gstinWords": 0, "uncertain": false}
+  {"name": "word with look-alike letters next to a number is not a mobile", "lines": ["BILLS 12345"], "types": [], "gstinWords": 0, "uncertain": false},
+  {"name": "split pan is not excused by a near-mobile after it", "lines": ["PAN: AAPF U0939F Mob: 9845O 12345"], "types": ["POSSIBLE_ID"], "gstinWords": 0, "uncertain": true},
+  {"name": "split pan is not excused by a 12-digit near-miss on the next line", "lines": ["PAN: AAPF U0939F", "Ref 2341 2341 2340"], "types": ["POSSIBLE_ID"], "gstinWords": 0, "uncertain": true},
+  {"name": "misread aadhaar is not excused by a later aadhaar-shaped number", "lines": ["Aadhaar: 2341 2341 23A6 Ref 2341-2341-2340"], "types": ["POSSIBLE_ID"], "gstinWords": 0, "uncertain": true},
+  {"name": "missing aadhaar is not excused by a phone near-miss on the next line", "lines": ["Aadhaar No: ____", "Call 98450 l2345"], "types": ["POSSIBLE_ID"], "gstinWords": 0, "uncertain": true}
 ]

@@ -126,6 +126,15 @@ describe('processBill', () => {
     expect(r.route.reason).toBe('cloud_error');
     expect(r.extraction?.total).toBe(1870);
   });
+  it('treats an unparsable cloud answer as a cloud error, keeping device fields', async () => {
+    const { deps, hooks, calls } = setup({ deviceOut: BAD_TOTAL, cloudOut: 'not json' });
+    const r = await processBill(IMG, deps, hooks);
+    expect(r.status).toBe('manual_entry');
+    expect(r.route).toMatchObject({ path: 'device', reason: 'cloud_error' });
+    expect(r.extraction?.total).toBe(1870);
+    expect(r.estCostUsd).toBeGreaterThan(0);
+    expect(calls.cloud).toEqual([REDACTED]);
+  });
   it('blocks the cloud when OCR fails', async () => {
     const { deps, hooks, calls } = setup({ deviceOut: BAD_TOTAL, ocrThrows: true });
     const r = await processBill(IMG, deps, hooks);

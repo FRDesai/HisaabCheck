@@ -101,7 +101,7 @@ export async function processBill(img: ImageInput, deps: RouterDeps, hooks: Rout
     return finish('device', 'cloud_error', 'manual_entry');
   }
   const cloudExt = parseExtraction(raw);
-  if (!cloudExt) return finish('cloud', 'invalid_json', 'manual_entry');
+  if (!cloudExt) return finish('device', 'cloud_error', 'manual_entry');
   ext = cloudExt;
   hooks.onStep('checking');
   res = runChecks(ext, cfg, clock.now());

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../auth/AuthProvider';
-import { watchRouteLogs } from '../../adapters/store';
+import { ROUTE_LOG_LIMIT, watchRouteLogs } from '../../adapters/store';
 import { loadConfig } from '../../adapters/remoteConfig';
 import { routeStats } from '../../core/stats/routeStats';
 import { CLOUD_COST_PER_CALL_USD } from '../../core/config/defaults';
@@ -20,14 +20,19 @@ const Tile = ({ label, value, tone = '', caption }: { label: string; value: stri
 export default function DashboardPage() {
   const { user, profile } = useAuth();
   const uid = user?.uid;
-  const isAdmin = profile?.role === 'admin';
+  const role = profile?.role;
   const [logs, setLogs] = useState<RouteLogDoc[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
   const [mode, setMode] = useState<RoutingMode | null>(null);
 
   useEffect(() => {
-    if (!uid) return;
-    return watchRouteLogs(uid, isAdmin, setLogs);
-  }, [uid, isAdmin]);
+    if (!uid || !role) return;
+    setLogs([]); setLoaded(false); setFailed(false);
+    return watchRouteLogs(uid, role === 'admin',
+      (l) => { setLogs(l); setLoaded(true); setFailed(false); },
+      () => setFailed(true));
+  }, [uid, role]);
 
   useEffect(() => {
     let alive = true;
@@ -51,21 +56,26 @@ export default function DashboardPage() {
         <h1 className="text-2xl font-bold">Routing</h1>
         <span className="px-3 py-1 rounded-full bg-slate-200 text-sm" aria-label={`Current routing mode: ${mode ?? 'loading'}`}>Mode: {mode ?? '…'}</span>
       </div>
-      {s.total === 0 ? (
+      {failed ? (
+        <p role="alert" className="bg-white rounded-lg border p-6 text-red-700">Could not load routing data. Please check your connection and reload.</p>
+      ) : !loaded ? (
+        <p role="status" className="bg-white rounded-lg border p-6 text-slate-600">Loading…</p>
+      ) : s.total === 0 ? (
         <p className="bg-white rounded-lg border p-6 text-slate-600">No bills processed yet</p>
       ) : (
         <>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Tile label="Bills read on device" value={`${s.devicePct}%`} tone="text-emerald-700"
-              caption={`${s.readOnDevice} of ${s.total} bills${s.manual ? ` (${s.manual} saved for manual entry)` : ''}`} />
-            <Tile label="Bills checked in cloud" value={`${s.cloud}`} />
-            <Tile label="Private numbers hidden" value={`${s.piiTotal}`} />
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            <Tile label="Read on device" value={`${s.devicePct}%`} tone="text-emerald-700" caption={`${s.readOnDevice} of ${s.total} bills`} />
+            <Tile label="Read in cloud" value={`${s.cloud}`} caption={`${s.cloud} of ${s.total} bills`} />
+            <Tile label="Saved for manual entry" value={`${s.manual}`} caption={`${s.manual} of ${s.total} bills`} />
+            <Tile label="Private numbers hidden before sending" value={`${s.piiTotal}`} caption={`Across ${s.sentToCloud} bills sent to cloud`} />
             <Tile label="Raw private numbers sent to cloud" value="0" tone="text-emerald-700"
-              caption="By design: only redacted images are sent. Verified by the redaction leak check." />
+              caption="By design: production builds send only redacted images. Verified by the redaction leak check." />
           </div>
           <p className="text-sm text-slate-600">
             Estimated cloud cost ${s.costUsd.toFixed(4)} · estimated saved vs all-cloud ${s.savedUsd.toFixed(4)} · {s.total} bills
           </p>
+          {logs.length >= ROUTE_LOG_LIMIT && <p className="text-xs text-slate-600">Based on the most recent {ROUTE_LOG_LIMIT.toLocaleString('en-US')} bills</p>}
           <section className="bg-white rounded-lg border p-4" aria-labelledby="why-h">
             <h2 id="why-h" className="font-semibold mb-2">Why bills went where they did</h2>
             <ul className="space-y-2">

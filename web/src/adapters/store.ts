@@ -68,9 +68,10 @@ export function saveProcessedBill(shop: Shop, caUid: string, p: ProcessedBill, b
 export const updateBillFields = (shopId: string, billId: string, e: Extraction, checks: Checks) =>
   updateDoc(doc(db, 'shops', shopId, 'bills', billId), { ...e, checks, editedAt: serverTimestamp() });
 
-export function watchRouteLogs(caUid: string, isAdmin: boolean, cb: (logs: RouteLogDoc[]) => void) {
+export const ROUTE_LOG_LIMIT = 1000;
+export function watchRouteLogs(caUid: string, isAdmin: boolean, cb: (logs: RouteLogDoc[]) => void, onError?: (e: Error) => void) {
   const base = collection(db, 'routeLogs');
-  const q = isAdmin ? query(base, orderBy('createdAt', 'desc'), limit(1000))
-                    : query(base, where('caUid', '==', caUid), orderBy('createdAt', 'desc'), limit(1000));
-  return onSnapshot(q, (s) => cb(s.docs.map((d) => d.data() as RouteLogDoc)));
+  const q = isAdmin ? query(base, orderBy('createdAt', 'desc'), limit(ROUTE_LOG_LIMIT))
+                    : query(base, where('caUid', '==', caUid), orderBy('createdAt', 'desc'), limit(ROUTE_LOG_LIMIT));
+  return onSnapshot(q, (s) => cb(s.docs.map((d) => d.data() as RouteLogDoc)), (e) => onError?.(e));
 }

@@ -10,7 +10,7 @@ The router is `web/src/core/router/processBill.ts`. For each bill it does this, 
 
 1. **Availability.** In `smart` mode it asks Chrome whether the on-device model is available. If it is not (or the check throws), the reason is `no_device_model`. In `cloud_only` mode the device is skipped (`cloud_only_mode`).
 2. **Device read and OCR in parallel.** OCR (Tesseract.js, in the browser) starts at once, before the device read, so a redaction is ready if the bill has to escalate. The device read has an 8 second timeout (`DEVICE_TIMEOUT_MS`).
-3. **Checks and confidence.** The device answer is parsed and checked (see below). If the answer is not valid JSON, the device times out, or it errors, the bill escalates. If the maths checks pass and the confidence is at or above `confidence_threshold`, the bill is saved as a draft from the device read. Nothing leaves the browser.
+3. **Checks and confidence.** The device answer is parsed and checked (see below). If the answer is not valid JSON, the device times out, or it errors, the bill escalates. If the maths checks pass and the confidence is at or above `confidence_threshold`, the bill is saved as a draft from the device read. The image is not sent to the cloud model; only the extracted fields and a counts-only route log are saved to Firestore.
 4. **Redaction.** On escalation, OCR words go through the privacy shield, and the matched private numbers are painted black on a copy of the image.
 5. **"Send to cloud?" preview.** If the shield is unsure (a label such as "A/C No" with no value found, a partial match, or a low-OCR-confidence word that looks like a number), the user sees the redacted image. They can draw extra black boxes, then send or keep the bill on the device.
 6. **Cloud read.** Only the redacted JPEG is sent, to the model named by `cloud_model`. The answer is parsed and checked again, and the bill is saved as a draft marked as a cloud read. If the cloud checks fail, the user still sees the result with the failed checks and can edit it.
@@ -22,18 +22,18 @@ Every path that ends in **manual entry** (the bill is saved with status `manual_
 | Reason | When |
 |---|---|
 | `ocr_error` | Escalation needed but OCR failed, so private numbers cannot be found. |
-| `redact_error` | Painting the redaction failed, or the image to send would be the original. |
+| `redact_error` | Painting the redaction failed, the preview failed, or the image to send would be the original. |
 | `user_kept_local` | The user chose not to send after the preview. |
 | `cloud_error` | The cloud call failed, or its answer was not valid JSON. |
 | the device failure reason | `routing_mode` is `device_only` and the device read was not usable (`no_device_model`, `device_timeout`, `device_error`, `invalid_json`, `total_mismatch`, `invalid_gstin` or `low_confidence`). |
 
-**The app picks the inference mode itself.** The Firebase AI SDK has modes that choose between device and cloud automatically and fall back silently. HisaabCheck never uses them. The device adapter always uses the SDK's on-device-only mode and the cloud adapter always uses its cloud-only mode (`web/src/adapters/firebaseAi.ts`), so the router, not the SDK, decides where an image goes. A test (`web/tests/no-prefer.test.ts`) fails the build if the automatic modes appear in `web/src`.
+**The app picks the inference mode itself.** The Firebase AI SDK has modes that choose between device and cloud automatically and fall back silently. HisaabCheck never uses them. The device adapter always uses the SDK's on-device-only mode and the cloud adapter always uses its cloud-only mode (`web/src/adapters/firebaseAi.ts`), so the router, not the SDK, decides where an image goes. A test (`web/tests/no-prefer.test.ts`) text-scans `web/src` and fails `npm test` if the automatic mode names appear.
 
 ## Privacy design
 
 **What is detected and blacked out** (`web/src/core/shield/shield.ts`): PAN, Aadhaar (the 12 digits must pass the Verhoeff checksum), IFSC codes, mobile numbers and labelled landline numbers, and bank account numbers (only when an account label such as "A/C No" is on the same or the previous line). Each match is painted over with padding.
 
-**GSTINs are never hidden.** They are public identifiers, and the GSTIN is needed to check the bill.
+**GSTINs are deliberately not masked:** words that match the GSTIN pattern are excluded from redaction. They are public identifiers, and the GSTIN is needed to check the bill.
 
 **Fail-closed guards:**
 - The cloud is not called if OCR failed.
@@ -41,6 +41,8 @@ Every path that ends in **manual entry** (the bill is saved with status `manual_
 - The cloud is not called if redaction throws.
 - The device adapter refuses to run when Chrome has no on-device model, and rejects any answer whose source is not the device. It never silently uses the cloud.
 - The preview component shows and returns only the redacted image; the original is not available to it.
+
+**OCR download.** OCR runs in the browser, but its worker and English language data are downloaded from a public CDN on first use (no bill data is sent). Self-hosting those files is planned.
 
 **Logging and storage.** Route logs hold counts and types only: path, reason, number of items masked, the types of private numbers found, latency, estimated cost, model name and prompt version. They hold no image and no extracted values. Firestore rules reject any other key in a route log (`firebase/firestore.rules`). A bill photo is stored only if the shop was created with "store images" on, and only the redacted version is uploaded (JPEG, under 3 MB; `firebase/storage.rules`). A bill read fully on the device has no redacted image, so no photo is stored for it.
 
@@ -68,7 +70,7 @@ Defaults are in `web/src/core/config/defaults.ts` and `firebase/remoteconfig.tem
 
 **Prerequisites**
 - Node.js 20 or newer.
-- Java 11 or newer, for the Firestore emulator used by the rules tests.
+- A recent JDK (the emulator was run with OpenJDK 27 here), for the Firestore emulator used by the rules tests.
 - Chrome with built-in AI, for the on-device path. Chrome documents these needs for Gemini Nano: 16 GB RAM or more than 4 GB VRAM, and about 22 GB free disk for the model download. Without it, the app still works through the cloud path.
 
 **Firebase project** (the code uses the placeholder project ID `hisaabcheck-dev`):
@@ -132,13 +134,15 @@ For each bill the tool runs the device read (if Chrome has the model), then OCR,
 - leak (`pii_left`): private numbers the detector still finds in the redacted image. `unchecked` if the bill errored before the check.
 - unsure: the shield would have shown the preview.
 
+The tool calls the models directly: it bypasses the router and the "Send to cloud?" preview, so its leak count describes the redaction step, not the full production path.
+
 The summary shows device and cloud field accuracy, failed and unsure bills, and the total leak count. It warns if not all bills were leak-checked.
 
 ## Status
 
 Implemented: Google sign-in and consent screen; client shops; bill upload with the full routing cascade; the on-device and cloud adapters; the privacy shield, redaction and consent preview; result screen with checks, editing and manual entry; saving bills and route logs; the routing dashboard; Remote Config; Firestore and Storage rules with a Firestore rules test suite; the accuracy and leak-check tool.
 
-**Not yet verified against a real Firebase project or in Chrome:** sign-in, saving to Firestore, the on-device read, the cloud read, the dashboard with live data, the Storage rules (including the image upload), App Check, and the Hosting deploy. The unit tests use fake adapters, and the rules tests cover only Firestore.
+**Not yet verified against a real Firebase project or in Chrome:** sign-in, saving to Firestore, the on-device read, the cloud read, the dashboard with live data, the Storage rules (including the image upload), App Check, and the Hosting deploy. Also unverified: Tesseract OCR and the shield on real bill photos (the shield has been exercised only on test vectors), a live Remote Config fetch, deployment of the Firestore composite index, App Check enforcement for AI Logic, and the persistent offline cache. The unit tests use fake adapters, and the rules tests cover only Firestore.
 
 **Measured accuracy:** not yet measured. To be filled in from the 40-bill run.
 

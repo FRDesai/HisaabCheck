@@ -52,4 +52,21 @@ describe('routeStats', () => {
     const noId = (reason: string) => ({ path: 'device', reason, piiMasked: 0, piiTypes: [], estCostUsd: 0 }) as never;
     expect(routeStats([noId('passed'), noId('passed'), log('a', 'device', 'passed'), log('a', 'device', 'passed')], 0.0003).total).toBe(3);
   });
+  it('tolerates malformed rows without throwing', () => {
+    const bad = [
+      { billId: 'a', path: 'cloud', reason: 'x', piiMasked: 'lots', piiTypes: 5, estCostUsd: 0.0003 },
+      { billId: 'b', path: 'cloud', reason: 'y', piiMasked: Number.NaN, piiTypes: null, estCostUsd: Infinity },
+      { billId: 'c', path: 'device', reason: 'passed', piiMasked: 1, piiTypes: 'PAN', estCostUsd: '0.5' },
+      { billId: 'd', path: 'cloud', reason: 'z', piiMasked: 2, piiTypes: ['PAN', 7], estCostUsd: 0.0003 },
+    ] as never[];
+    let s!: ReturnType<typeof routeStats>;
+    expect(() => { s = routeStats(bad, 0.0003); }).not.toThrow();
+    expect(s.total).toBe(4);
+    expect(s.costUsd).toBeCloseTo(0.0006);
+    expect(s.sentToCloud).toBe(2);
+    expect(s.piiTotal).toBe(2);
+    expect(s.piiByType).toEqual({ PAN: 1 });
+    expect(Number.isFinite(s.savedUsd)).toBe(true);
+  });
 });
+

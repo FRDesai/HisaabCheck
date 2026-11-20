@@ -14,7 +14,7 @@ export default function ConsentPage() {
 
   async function agree() {
     setSaving(true); setError(null);
-    try { await recordConsent(user!.uid); await refresh(); nav('/shops'); }
+    try { await recordConsent(user!); await refresh(); nav('/shops'); }
     catch { setError('Could not save your consent. Please try again.'); setSaving(false); }
   }
   return (

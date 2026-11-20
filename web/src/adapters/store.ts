@@ -18,11 +18,19 @@ export async function ensureUser(u: User): Promise<UserDoc> {
   setDoc(r, { ...d, createdAt: serverTimestamp() }).catch(() => {});
   return d;
 }
-export async function recordConsent(uid: string): Promise<void> {
-  const r = doc(db, 'users', uid);
+export async function recordConsent(u: Pick<User, 'uid' | 'displayName' | 'email'>): Promise<void> {
+  const r = doc(db, 'users', u.uid);
   const snap = await getDoc(r);
-  if (snap.exists() && snap.data().consentVersion === CONSENT_VERSION) return; // keep the original consent time
-  await updateDoc(r, { consentVersion: CONSENT_VERSION, consentAt: serverTimestamp() });
+  const consent = { consentVersion: CONSENT_VERSION, consentAt: serverTimestamp() };
+  if (!snap.exists()) {
+    // ensureUser's create was refused or lost: create the doc now (always as 'ca'; rules allow nothing else).
+    // merge: if the doc does exist on the server after all, this cannot change its role (rules refuse a role change).
+    const d: UserDoc = { role: 'ca', name: u.displayName ?? '', email: u.email ?? '' };
+    await setDoc(r, { ...d, ...consent, createdAt: serverTimestamp() }, { merge: true });
+    return;
+  }
+  if (snap.data().consentVersion === CONSENT_VERSION) return; // keep the original consent time
+  await updateDoc(r, consent); // never touches role
 }
 
 export function watchShops(caUid: string, cb: (s: Shop[]) => void) {
@@ -45,7 +53,9 @@ export function saveProcessedBill(shop: Shop, caUid: string, p: ProcessedBill, b
   synced.catch(() => {}); // callers may ignore `synced`; avoid an unhandled rejection
   // Route log is best-effort telemetry (counts/types only) and never affects the bill.
   try {
-    setDoc(doc(collection(db, 'routeLogs')), toRouteLog(p, { billId: billRef.id, shopId: shop.id, caUid }, new Date())).catch(() => {});
+    // createdAt is the server's clock (rules require request.time); toRouteLog stays pure and its Date is replaced here.
+    const log = { ...toRouteLog(p, { billId: billRef.id, shopId: shop.id, caUid }, new Date()), createdAt: serverTimestamp() };
+    setDoc(doc(collection(db, 'routeLogs')), log).catch(() => {});
   } catch { /* telemetry only */ }
 
   let photo: Promise<'stored' | 'skipped' | 'failed'> = Promise.resolve('skipped');

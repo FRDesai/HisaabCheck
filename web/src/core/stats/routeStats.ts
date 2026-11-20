@@ -15,6 +15,10 @@ export type RouteStats = {
 
 export type RouteStatsInput = Pick<RouteLogDoc, 'billId' | 'path' | 'reason' | 'piiMasked' | 'piiTypes' | 'estCostUsd'>;
 
+// Logs come from Firestore and may be malformed (old clients, bad writes): never let one row break the dashboard.
+const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+const types = (v: unknown): string[] => (Array.isArray(v) ? v.filter((t): t is string => typeof t === 'string') : []);
+
 export function routeStats(logs: RouteStatsInput[], costPerCall: number): RouteStats {
   const seen = new Set<string>();
   const unique = logs.filter((l) => {
@@ -31,12 +35,13 @@ export function routeStats(logs: RouteStatsInput[], costPerCall: number): RouteS
       if (l.reason === 'passed') s.readOnDevice++; else s.manual++;
     } else s.cloud++;
     s.reasons[l.reason] = (s.reasons[l.reason] ?? 0) + 1;
-    if (l.estCostUsd > 0) {
+    const cost = num(l.estCostUsd);
+    if (cost > 0) {
       s.sentToCloud++;
-      for (const t of l.piiTypes) s.piiByType[t] = (s.piiByType[t] ?? 0) + 1;
-      s.piiTotal += l.piiMasked;
+      for (const t of types(l.piiTypes)) s.piiByType[t] = (s.piiByType[t] ?? 0) + 1;
+      s.piiTotal += num(l.piiMasked);
     }
-    s.costUsd += l.estCostUsd;
+    s.costUsd += cost;
   }
   s.devicePct = s.total ? Math.round((s.readOnDevice / s.total) * 100) : 0;
   s.savedUsd = Math.max(0, s.total * costPerCall - s.costUsd);

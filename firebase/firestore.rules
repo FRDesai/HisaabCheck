@@ -27,10 +27,30 @@ service cloud.firestore {
       }
     }
 
+    // Counts and types only; every field type-checked so a bad row cannot break the admin dashboard,
+    // server time only so a log cannot be dated into the future, and only for a shop the writer owns.
+    function validRouteLog(d) {
+      return d.keys().hasOnly(['billId','shopId','caUid','platform','path','reason','piiMasked',
+             'piiTypes','latencyMs','estCostUsd','modelName','promptVersion','createdAt'])
+        && d.keys().hasAll(['billId','shopId','caUid','platform','path','reason','piiMasked',
+             'piiTypes','latencyMs','estCostUsd','modelName','promptVersion','createdAt'])
+        && d.caUid == uid()
+        && d.createdAt == request.time
+        && d.platform == 'web'
+        && d.path in ['device', 'cloud']
+        && d.reason is string
+        && d.piiTypes is list && d.piiTypes.size() <= 8
+        && d.piiMasked is int && d.piiMasked >= 0
+        && d.latencyMs is number && d.latencyMs >= 0
+        && d.estCostUsd is number && d.estCostUsd >= 0 && d.estCostUsd <= 1
+        && d.modelName is string
+        && d.promptVersion is string
+        && d.billId is string
+        && d.shopId is string && ownsShop(d.shopId);
+    }
+
     match /routeLogs/{logId} {
-      allow create: if signedIn() && request.resource.data.caUid == uid()
-        && request.resource.data.keys().hasOnly(['billId','shopId','caUid','platform','path','reason','piiMasked',
-             'piiTypes','latencyMs','estCostUsd','modelName','promptVersion','createdAt']);
+      allow create: if signedIn() && validRouteLog(request.resource.data);
       allow read: if signedIn() && (resource.data.caUid == uid() || isAdmin());
       allow update, delete: if false;
     }

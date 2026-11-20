@@ -5,7 +5,7 @@ import type { Shop } from '../../src/adapters/store';
 
 const calls: string[] = [];
 const m = vi.hoisted(() => ({
-  setDoc: vi.fn(), updateDoc: vi.fn(), uploadBytes: vi.fn(), n: 0,
+  setDoc: vi.fn(), updateDoc: vi.fn(), uploadBytes: vi.fn(), getDoc: vi.fn(), n: 0,
 }));
 vi.mock('../../src/firebase', () => ({ db: {}, storage: {} }));
 vi.mock('firebase/firestore', () => ({
@@ -16,11 +16,11 @@ vi.mock('firebase/firestore', () => ({
     return { id: p[p.length - 1], path: [base, ...p].join('/') };
   },
   setDoc: m.setDoc, updateDoc: m.updateDoc, serverTimestamp: () => 'TS',
-  addDoc: vi.fn(), getDoc: vi.fn(), onSnapshot: vi.fn(), orderBy: vi.fn(), query: vi.fn(), where: vi.fn(), limit: vi.fn(),
+  addDoc: vi.fn(), getDoc: m.getDoc, onSnapshot: vi.fn(), orderBy: vi.fn(), query: vi.fn(), where: vi.fn(), limit: vi.fn(),
 }));
 vi.mock('firebase/storage', () => ({ ref: (_s: unknown, path: string) => ({ path }), uploadBytes: m.uploadBytes }));
 
-import { saveProcessedBill } from '../../src/adapters/store';
+import { CONSENT_VERSION, recordConsent, saveProcessedBill } from '../../src/adapters/store';
 
 const shop = (storeImages: boolean): Shop => ({ id: 's1', caUid: 'u1', shopName: 'A', gstin: '', state: '', storeImages });
 const img = new Blob(['x'], { type: 'image/jpeg' });
@@ -37,6 +37,7 @@ beforeEach(() => {
   m.setDoc.mockReset().mockImplementation(async (r: { path: string }) => { calls.push(`set:${r.path}`); });
   m.updateDoc.mockReset().mockResolvedValue(undefined);
   m.uploadBytes.mockReset().mockImplementation(async () => { calls.push('upload'); });
+  m.getDoc.mockReset();
 });
 
 describe('saveProcessedBill', () => {
@@ -88,5 +89,39 @@ describe('saveProcessedBill', () => {
     saveProcessedBill(shop(false), 'u1', bill());
     const log = m.setDoc.mock.calls.find((c) => c[0].path.startsWith('routeLogs'))![1];
     expect(Object.keys(log).sort()).toEqual([...ROUTE_LOG_KEYS].sort());
+  });
+});
+
+describe('route log time', () => {
+  it('uses the server timestamp, not the client clock', () => {
+    saveProcessedBill(shop(false), 'u1', bill());
+    const log = m.setDoc.mock.calls.find((c) => c[0].path.startsWith('routeLogs'))![1];
+    expect(log.createdAt).toBe('TS');
+  });
+});
+
+describe('recordConsent', () => {
+  const user = { uid: 'u1', displayName: 'Asha', email: 'a@example.com' };
+  const snap = (data?: Record<string, unknown>) => ({ exists: () => !!data, data: () => data });
+  it('creates the user doc as a CA with consent when it does not exist', async () => {
+    m.getDoc.mockResolvedValue(snap());
+    await recordConsent(user);
+    expect(m.updateDoc).not.toHaveBeenCalled();
+    expect(m.setDoc).toHaveBeenCalledTimes(1);
+    const [ref, data] = m.setDoc.mock.calls[0];
+    expect(ref.path).toMatch(/(^|\/)users\/u1$/);
+    expect(data).toEqual({ role: 'ca', name: 'Asha', email: 'a@example.com', consentVersion: CONSENT_VERSION, consentAt: 'TS', createdAt: 'TS' });
+  });
+  it('adds consent to an existing doc without touching the role', async () => {
+    m.getDoc.mockResolvedValue(snap({ role: 'admin', name: 'X' }));
+    await recordConsent(user);
+    expect(m.setDoc).not.toHaveBeenCalled();
+    expect(m.updateDoc.mock.calls[0][1]).toEqual({ consentVersion: CONSENT_VERSION, consentAt: 'TS' });
+  });
+  it('never overwrites an existing consent for the same version', async () => {
+    m.getDoc.mockResolvedValue(snap({ role: 'ca', consentVersion: CONSENT_VERSION }));
+    await recordConsent(user);
+    expect(m.setDoc).not.toHaveBeenCalled();
+    expect(m.updateDoc).not.toHaveBeenCalled();
   });
 });

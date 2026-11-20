@@ -6,7 +6,7 @@ import type { ConsentResult, Step } from '../../core/types';
 const STEPS: Array<[Step, string]> = [['availability', 'Checking device AI'], ['device_read', 'Reading on device'], ['checking', 'Checking maths'],
   ['redacting', 'Hiding private numbers'], ['awaiting_consent', 'Waiting for you'], ['cloud_read', 'Reading in cloud'], ['done', 'Saved']];
 
-export default function BillCard({ job, shopId, onRetry, onConsent }: { job: BillJob; shopId: string; onRetry(): void; onConsent(r: ConsentResult): void }) {
+export default function BillCard({ job, shopId, onRetry, onRetrySave, onConsent }: { job: BillJob; shopId: string; onRetry(): void; onRetrySave(): void; onConsent(r: ConsentResult): void }) {
   const current = STEPS.findIndex(([s]) => s === job.step);
   const active = job.step !== 'done' && job.step !== 'error';
   return (
@@ -32,7 +32,8 @@ export default function BillCard({ job, shopId, onRetry, onConsent }: { job: Bil
         <div className="mt-2 text-sm">
           {job.sync === 'pending' && <p role="status" className="text-slate-600">Will sync when online</p>}
           {job.sync === 'saved' && <p role="status" className="text-emerald-800">Saved</p>}
-          {job.sync === 'failed' && <p role="alert" className="text-red-700">Not saved — check your connection and retry</p>}
+          {job.sync === 'failed' && <div role="alert" className="text-red-700">Not saved — check your connection and retry{' '}
+            <button className="underline" onClick={onRetrySave} aria-label={`Retry save for ${job.file.name}`}>Retry save</button></div>}
           {job.photo === 'failed' && <p role="status" className="text-amber-800">Photo not stored</p>}
         </div>
       )}

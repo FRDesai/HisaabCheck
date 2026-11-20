@@ -40,6 +40,13 @@ beforeEach(() => {
 });
 
 describe('saveProcessedBill', () => {
+  it('with billId given, writes to that id and generates no new id', async () => {
+    const r = saveProcessedBill(shop(false), 'u1', bill(), 'existing1');
+    expect(r.billId).toBe('existing1');
+    expect(m.setDoc.mock.calls[0][0].path).toContain('shops/s1/bills/existing1');
+    expect(m.n).toBe(1); // only the route-log doc consumed an auto-id; none for the bill
+    await r.synced;
+  });
   it('returns billId synchronously and issues the bill write before any upload', async () => {
     const r = saveProcessedBill(shop(true), 'u1', bill());
     expect(typeof r.billId).toBe('string');

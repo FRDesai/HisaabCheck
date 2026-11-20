@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import type { Box, ConsentResult } from '../../core/types';
 import { canvasPainter } from '../../adapters/canvasPainter';
 import { normBox, pointToImage, boxToPercent, bottomThird } from './boxes';
@@ -7,8 +7,13 @@ const FOCUSABLE = 'button:not([disabled]), [href], input, select, textarea, [tab
 
 // Shows ONLY the redacted image. Extra boxes are painted onto that redacted image and returned; the original is never available here.
 export default function ConsentPreview({ redacted, onDone }: { redacted: Blob; onDone(r: ConsentResult): void }) {
-  const url = useMemo(() => URL.createObjectURL(redacted), [redacted]);
-  useEffect(() => () => URL.revokeObjectURL(url), [url]);
+  // Created inside the effect so a StrictMode re-run gets a fresh URL instead of a revoked one.
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    const u = URL.createObjectURL(redacted);
+    setUrl(u);
+    return () => { URL.revokeObjectURL(u); setUrl(null); };
+  }, [redacted]);
   const imgRef = useRef<HTMLImageElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const [boxes, setBoxes] = useState<Box[]>([]);
@@ -54,12 +59,12 @@ export default function ConsentPreview({ redacted, onDone }: { redacted: Blob; o
         <h2 id="cp-title" className="text-xl font-bold">Send to cloud?</h2>
         <p id="cp-desc" className="text-slate-700">We couldn't be sure every private number was found. Check the image — black boxes will be hidden from the cloud. Drag over anything else to hide it, or use "Black out bottom third". Press Escape to keep this bill on your device.</p>
         <div className="relative select-none touch-none"
-          onPointerDown={(e) => { e.currentTarget.setPointerCapture?.(e.pointerId); const p = toImg(e); setDrag({ x0: p.x, y0: p.y, x1: p.x, y1: p.y }); }}
-          onPointerMove={(e) => { if (drag) { const p = toImg(e); setDrag({ ...drag, x1: p.x, y1: p.y }); } }}
+          onPointerDown={(e) => { if (e.button !== 0 || !imgRef.current || nat.w <= 0) return; e.currentTarget.setPointerCapture?.(e.pointerId); const p = toImg(e); setDrag({ x0: p.x, y0: p.y, x1: p.x, y1: p.y }); }}
+          onPointerMove={(e) => { if (drag && imgRef.current) { const p = toImg(e); setDrag({ ...drag, x1: p.x, y1: p.y }); } }}
           onPointerUp={() => { if (drag) { const n = normBox(drag); if (n.x1 - n.x0 > 2 && n.y1 - n.y0 > 2) setBoxes([...boxes, n]); } setDrag(null); }}
           onPointerCancel={() => setDrag(null)}>
-          <img ref={imgRef} src={url} alt="Bill with private numbers blacked out. This is what would be sent." className="w-full" draggable={false}
-            onLoad={(e) => setNat({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })} />
+          {url && <img ref={imgRef} src={url} alt="Bill with private numbers blacked out. This is what would be sent." className="block w-full" draggable={false}
+            onLoad={(e) => setNat({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })} />}
           {[...boxes, ...(drag ? [drag] : [])].map((b, i) => <div key={i} className="absolute bg-black" style={boxToPercent(b, nat.w, nat.h)} />)}
         </div>
         <p role="status" className="text-sm text-slate-600">{boxes.length} extra box{boxes.length === 1 ? '' : 'es'} added</p>
@@ -68,7 +73,7 @@ export default function ConsentPreview({ redacted, onDone }: { redacted: Blob; o
           <button className="px-5 py-3 rounded-lg bg-emerald-700 text-white disabled:opacity-60" onClick={send} disabled={busy}>Send to cloud</button>
           <button className="px-5 py-3 rounded-lg border" onClick={() => onDone({ send: false })}>Keep on device</button>
           <button className="px-3 py-3 text-sm underline disabled:opacity-50" onClick={() => setBoxes([])} disabled={!boxes.length}>Undo my boxes</button>
-          <button className="px-3 py-3 text-sm underline" onClick={() => { const i = imgRef.current!; setBoxes([...boxes, bottomThird(i.naturalWidth, i.naturalHeight)]); }}>
+          <button className="px-3 py-3 text-sm underline disabled:opacity-50" disabled={nat.w <= 0} onClick={() => { const i = imgRef.current!; setBoxes([...boxes, bottomThird(i.naturalWidth, i.naturalHeight)]); }}>
             Black out bottom third</button>
         </div>
       </div>

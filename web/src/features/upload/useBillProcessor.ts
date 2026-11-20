@@ -6,7 +6,7 @@ import { tesseractOcr } from '../../adapters/tesseractOcr';
 import { canvasPainter } from '../../adapters/canvasPainter';
 import { resizeImage } from '../../adapters/imageResize';
 import { loadConfig } from '../../adapters/remoteConfig';
-import { saveProcessedBill, type Shop } from '../../adapters/store';
+import { saveProcessedBill, type SavedBill, type Shop } from '../../adapters/store';
 import { useAuth } from '../auth/AuthProvider';
 
 export type BillJob = {
@@ -32,6 +32,12 @@ export function useBillProcessor(shop: Shop | null) {
     setBills((bs) => bs.map((b) => (b.id === id ? j : b)));
   }, []);
 
+  const track = useCallback((id: string, saved: SavedBill) => {
+    patch(id, { sync: 'pending', photo: undefined });
+    saved.synced.then(() => patch(id, { sync: 'saved' }), () => patch(id, { sync: 'failed' }));
+    saved.photo.then((p) => patch(id, { photo: p }), () => patch(id, { photo: 'failed' }));
+  }, [patch]);
+
   const pump = useCallback(async () => {
     if (running.current || !shop || !user) return;
     running.current = true;
@@ -52,9 +58,8 @@ export function useBillProcessor(shop: Shop | null) {
           });
           // Only the redacted image (inside `result`) reaches the store; the original File never does.
           const saved = saveProcessedBill(shop, user.uid, result);
-          patch(id, { result, billId: saved.billId, consent: undefined, step: 'done', sync: 'pending', photo: undefined });
-          saved.synced.then(() => patch(id, { sync: 'saved' }), () => patch(id, { sync: 'failed' }));
-          saved.photo.then((p) => patch(id, { photo: p }), () => patch(id, { photo: 'failed' }));
+          patch(id, { result, billId: saved.billId, consent: undefined, step: 'done' });
+          track(id, saved);
         } catch (e) {
           patch(id, { step: 'error', consent: undefined, error: e instanceof Error ? e.message : String(e) });
         }
@@ -62,7 +67,7 @@ export function useBillProcessor(shop: Shop | null) {
     } finally {
       running.current = false;
     }
-  }, [shop, user, patch]);
+  }, [shop, user, patch, track]);
 
   // Start (or resume) processing once the shop and user are known, e.g. files dropped before the shop loaded.
   useEffect(() => { void pump(); }, [pump]);
@@ -90,10 +95,18 @@ export function useBillProcessor(shop: Shop | null) {
   }, [pump]);
 
   const retry = useCallback((id: string) => {
+    if (jobs.current.get(id)?.step === 'queued') return;
     patch(id, { step: 'queued', error: undefined, result: undefined, billId: undefined, sync: undefined, photo: undefined });
     queue.current.push(id);
     void pump();
   }, [patch, pump]);
+
+  // Re-save the finished result to the SAME bill doc; the cascade is not re-run.
+  const retrySave = useCallback((id: string) => {
+    const j = jobs.current.get(id);
+    if (!shop || !user || !j?.result || !j.billId || j.sync !== 'failed') return;
+    track(id, saveProcessedBill(shop, user.uid, j.result, j.billId));
+  }, [shop, user, track]);
 
   const resolveConsent = useCallback((id: string, r: ConsentResult) => {
     consentWaiters.current.get(id)?.(r);
@@ -101,5 +114,5 @@ export function useBillProcessor(shop: Shop | null) {
     patch(id, { consent: undefined });
   }, [patch]);
 
-  return { bills, addFiles, retry, resolveConsent };
+  return { bills, addFiles, retry, retrySave, resolveConsent };
 }

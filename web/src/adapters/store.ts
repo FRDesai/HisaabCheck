@@ -35,8 +35,9 @@ export async function createShop(caUid: string, s: Omit<Shop, 'id' | 'caUid'>) {
 
 export type SavedBill = { billId: string; synced: Promise<void>; photo: Promise<'stored' | 'skipped' | 'failed'> };
 
-export function saveProcessedBill(shop: Shop, caUid: string, p: ProcessedBill): SavedBill {
-  const billRef = doc(collection(db, 'shops', shop.id, 'bills'));
+export function saveProcessedBill(shop: Shop, caUid: string, p: ProcessedBill, billId?: string): SavedBill {
+  // billId given = re-save of an existing bill (same doc, no duplicate); otherwise a fresh auto-id.
+  const billRef = billId ? doc(db, 'shops', shop.id, 'bills', billId) : doc(collection(db, 'shops', shop.id, 'bills'));
   // Bill first. Not awaited here: the offline cache queues it; `synced` settles on server ack/refusal.
   const synced = setDoc(billRef, {
     ...(p.extraction ?? {}), checks: p.checks, status: p.status, route: p.route, createdAt: serverTimestamp(),

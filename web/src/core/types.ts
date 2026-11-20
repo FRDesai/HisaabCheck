@@ -6,7 +6,8 @@ export type Reason =
 export type BillStatus = 'draft' | 'approved' | 'rejected' | 'manual_entry';
 export type RoutingMode = 'smart' | 'device_only' | 'cloud_only';
 export type Availability = 'available' | 'downloadable' | 'downloading' | 'unavailable';
-export type PiiType = 'PAN' | 'AADHAAR' | 'PHONE' | 'BANK_ACCOUNT' | 'IFSC';
+/** POSSIBLE_ID: a near-miss (OCR look-alike or failed checksum) of PAN/Aadhaar/mobile; hidden as a precaution. */
+export type PiiType = 'PAN' | 'AADHAAR' | 'PHONE' | 'BANK_ACCOUNT' | 'IFSC' | 'POSSIBLE_ID';
 
 export interface LineItem { description: string; hsn: string; qty: number; rate: number; amount: number }
 export interface Extraction {

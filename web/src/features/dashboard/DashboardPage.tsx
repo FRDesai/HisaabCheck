@@ -4,6 +4,7 @@ import { ROUTE_LOG_LIMIT, watchRouteLogs } from '../../adapters/store';
 import { loadConfig } from '../../adapters/remoteConfig';
 import { routeStats } from '../../core/stats/routeStats';
 import { CLOUD_COST_PER_CALL_USD } from '../../core/config/defaults';
+import { piiLabel } from '../../core/shield/piiLabels';
 import type { RouteLogDoc } from '../../core/router/routeLog';
 import type { RoutingMode } from '../../core/types';
 
@@ -91,7 +92,7 @@ export default function DashboardPage() {
             <h2 id="pii-h" className="font-semibold mb-2">Hidden by type (bills)</h2>
             {Object.keys(s.piiByType).length === 0
               ? <p className="text-sm text-slate-600">No private numbers found.</p>
-              : <ul className="text-sm">{Object.entries(s.piiByType).map(([t, n]) => <li key={t}>{t}: {n}</li>)}</ul>}
+              : <ul className="text-sm">{Object.entries(s.piiByType).map(([t, n]) => <li key={t}>{piiLabel(t)}: {n}</li>)}</ul>}
           </section>
         </>
       )}

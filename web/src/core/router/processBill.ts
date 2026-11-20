@@ -5,6 +5,7 @@ import { cloudPrompt, devicePrompt } from '../extract/prompts';
 import { parseExtraction } from '../extract/parse';
 import { runChecks } from '../checks/checks';
 import { runShield } from '../shield/shield';
+import { ocrAdequate } from '../shield/adequacy';
 import { planRedaction } from '../redact/planRedaction';
 import { TimeoutError, withTimeout } from './timeout';
 
@@ -76,9 +77,11 @@ export async function processBill(img: ImageInput, deps: RouterDeps, hooks: Rout
   if (cfg.maskPii) {
     const shield = runShield(ocr.words, cfg.consentOcrThreshold);
     plan = planRedaction(ocr.words, shield, img.width, img.height);
+    // "The shield found nothing" only means "nothing to hide" if OCR actually read the bill.
+    const needsPreview = shield.uncertain || !ocrAdequate(ocr.words);
     try {
       toSend = await deps.painter.paint(img.blob, plan.boxes);
-      if (shield.uncertain) {
+      if (needsPreview) {
         hooks.onStep('awaiting_consent');
         const c = await hooks.askConsent(toSend, plan);
         if (!c.send) return finish('device', 'user_kept_local', 'manual_entry');
@@ -89,8 +92,9 @@ export async function processBill(img: ImageInput, deps: RouterDeps, hooks: Rout
     }
     // Fail closed: never send the original image when masking is on.
     if (toSend === img.blob) return finish('device', 'redact_error', 'manual_entry');
+    redacted = toSend;
   }
-  redacted = toSend;
+  // With masking off (dev only) nothing was redacted, so redactedImage stays null and is never stored.
 
   hooks.onStep('cloud_read');
   let raw: string;

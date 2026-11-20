@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Checks, Extraction, ProcessedBill, Reason } from '../../core/types';
 import { runChecks } from '../../core/checks/checks';
 import { parseConfig } from '../../core/config/parseConfig';
+import { piiLabel } from '../../core/shield/piiLabels';
 import { updateBillFields } from '../../adapters/store';
 import { toFormText, parseForm, type FieldKey } from './fields';
 
@@ -73,7 +74,7 @@ export default function ResultPanel({ shopId, billId, result, originalUrl }: { s
       </div>
       <div className="space-y-2">
         <span className={`inline-block px-3 py-1 rounded-full text-sm ${path === 'device' && reason === 'passed' ? 'bg-emerald-100 text-emerald-900' : path === 'cloud' ? 'bg-sky-100 text-sky-900' : 'bg-amber-100 text-amber-900'}`}>{badge}</span>
-        {result.piiMasked > 0 && <p className="text-sm text-slate-600">{result.piiMasked} private number(s) hidden: {result.piiTypes.join(', ')}</p>}
+        {result.piiMasked > 0 && <p className="text-sm text-slate-600">{result.piiMasked} private number(s) hidden: {result.piiTypes.map(piiLabel).join(', ')}</p>}
         {checks && (Object.keys(CHECK_MSG) as (keyof Checks)[]).filter((k) => !checks[k]).map((k) => <p key={k} className="text-red-700 text-sm">⚠ {CHECK_MSG[k]}</p>)}
         {FIELDS.map(([k, label, type]) => {
           const badInput = invalid.includes(k);

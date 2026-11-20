@@ -21,4 +21,21 @@ describe('runShield vectors', () => {
     const r = runShield(wordsFromLines(['Aadhaar No 2341 2341 2346']), 0.6);
     expect(r.matches[0].wordIndexes).toEqual([2, 3, 4]);
   });
+  it('never claims a GSTIN word with the near-miss matchers', () => {
+    // GSTIN contains a PAN; neighbours are near-misses. Only the near-PAN word is claimed.
+    const r = runShield(wordsFromLines(['27AAPFU0939F1ZV ABCDEI234F 2341-2341-2340']), 0.6);
+    expect(r.gstinWordIndexes).toEqual([0]);
+    expect(r.matches.flatMap((m) => m.wordIndexes)).not.toContain(0);
+    expect(r.matches.map((m) => m.type)).toEqual(['POSSIBLE_ID', 'POSSIBLE_ID']);
+  });
+  it('hides a low-confidence look-alike mobile and still asks the human', () => {
+    const r = runShield(wordsFromLines(['Contact 98450 1Z345'], 40), 0.6);
+    expect(r.matches).toEqual([{ type: 'POSSIBLE_ID', wordIndexes: [1, 2] }]);
+    expect(r.uncertainReasons.some((x) => x.startsWith('low_ocr_confidence'))).toBe(true);
+  });
+  it('keeps exact types ahead of near-misses', () => {
+    const r = runShield(wordsFromLines(['PAN AAPFU0939F Mob 98450 12345 Aadhaar 2341-2341-2346']), 0.6);
+    expect(r.matches.map((m) => m.type).sort()).toEqual(['AADHAAR', 'PAN', 'PHONE']);
+  });
 });
+

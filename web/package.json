@@ -10,7 +10,8 @@
     "test:watch": "vitest",
     "test:rules": "cd ../firebase && firebase emulators:exec --only firestore --project demo-hisaabcheck \"cd ../web && vitest run --config vitest.rules.config.ts\"",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy": "npm run build && cd ../firebase && firebase deploy --only hosting --project hisaabcheck-dev"
   },
   "dependencies": {
     "firebase": "12.19.0",

@@ -13,13 +13,14 @@ const GOOD = JSON.stringify({ supplierName: 'Ravi Traders', supplierGstin: '29AA
 const BAD_TOTAL = GOOD.replace('"total":1770', '"total":1870');
 
 interface Opts { avail?: Availability; deviceOut?: string; deviceThrows?: boolean; deviceDelayMs?: number;
-  cloudOut?: string; cloudThrows?: boolean; ocrWords?: OcrWord[]; ocrThrows?: boolean; config?: Partial<Config> }
+  cloudOut?: string; cloudThrows?: boolean; ocrWords?: OcrWord[]; ocrThrows?: boolean; config?: Partial<Config>;
+  availThrows?: boolean; paintThrows?: boolean; paintReturnsInput?: boolean }
 
 function setup(o: Opts = {}) {
   const calls = { device: 0, cloud: [] as Blob[], paint: 0 };
   const deps: RouterDeps = {
     device: {
-      availability: async () => o.avail ?? 'available',
+      availability: async () => { if (o.availThrows) throw new Error('avail'); return o.avail ?? 'available'; },
       download: async () => {},
       extract: async () => {
         calls.device++;
@@ -30,7 +31,7 @@ function setup(o: Opts = {}) {
     },
     cloud: { extract: async (img) => { calls.cloud.push(img.blob); if (o.cloudThrows) throw new Error('net'); return o.cloudOut ?? GOOD; } },
     ocr: { recognize: async () => { if (o.ocrThrows) throw new Error('ocr'); return o.ocrWords ?? wordsFromLines(['PAN: AAPFU0939F']); } },
-    painter: { paint: async () => { calls.paint++; return REDACTED; } },
+    painter: { paint: async (blob) => { calls.paint++; if (o.paintThrows) throw new Error('paint'); return o.paintReturnsInput ? blob : REDACTED; } },
     config: { ...parseConfig({}, false), ...o.config },
     clock: { now: () => new Date('2026-11-20T10:00:00+05:30') },
     deviceTimeoutMs: 50,
@@ -137,6 +138,51 @@ describe('processBill', () => {
     const r = await processBill(IMG, deps, hooks);
     expect(r.status).toBe('draft');
     expect(r.checks?.total).toBe(false);
+  });
+  it('treats a throwing availability check as no device model', async () => {
+    const { deps, hooks, calls } = setup({ availThrows: true });
+    const r = await processBill(IMG, deps, hooks);
+    expect(r.route.reason).toBe('no_device_model');
+    expect(calls.device).toBe(0);
+    expect(calls.cloud).toEqual([REDACTED]);
+    neverRaw(calls);
+  });
+  it('throwing availability in device_only mode is manual entry', async () => {
+    const { deps, hooks, calls } = setup({ availThrows: true, config: { routingMode: 'device_only' } });
+    const r = await processBill(IMG, deps, hooks);
+    expect(r).toMatchObject({ status: 'manual_entry', extraction: null });
+    expect(r.route.reason).toBe('no_device_model');
+    expect(calls.cloud).toHaveLength(0);
+  });
+  it('returns manual entry when the painter rejects', async () => {
+    const { deps, hooks, calls } = setup({ deviceOut: BAD_TOTAL, paintThrows: true });
+    const r = await processBill(IMG, deps, hooks);
+    expect(r).toMatchObject({ status: 'manual_entry', route: { path: 'device', reason: 'redact_error' } });
+    expect(r.extraction?.total).toBe(1870);
+    expect(calls.cloud).toHaveLength(0);
+    expect(hooks.onStep).toHaveBeenLastCalledWith('done');
+  });
+  it('returns manual entry when askConsent rejects', async () => {
+    const { deps, hooks, calls } = setup({ deviceOut: BAD_TOTAL, ocrWords: wordsFromLines(['PAN No: ____']) });
+    hooks.askConsent.mockRejectedValueOnce(new Error('ui'));
+    const r = await processBill(IMG, deps, hooks);
+    expect(r).toMatchObject({ status: 'manual_entry', route: { path: 'device', reason: 'redact_error' } });
+    expect(calls.cloud).toHaveLength(0);
+    expect(hooks.onStep).toHaveBeenLastCalledWith('done');
+  });
+  it('fails closed when the painter returns the original image', async () => {
+    const { deps, hooks, calls } = setup({ deviceOut: BAD_TOTAL, paintReturnsInput: true });
+    const r = await processBill(IMG, deps, hooks);
+    expect(r).toMatchObject({ status: 'manual_entry', route: { path: 'device', reason: 'redact_error' } });
+    expect(calls.cloud).toHaveLength(0);
+    expect(r.redactedImage).toBeNull();
+  });
+  it('fails closed when consent hands back the original image', async () => {
+    const { deps, hooks, calls } = setup({ deviceOut: BAD_TOTAL, ocrWords: wordsFromLines(['PAN No: ____']) });
+    hooks.askConsent.mockResolvedValueOnce({ send: true, image: RAW } as never);
+    const r = await processBill(IMG, deps, hooks);
+    expect(r).toMatchObject({ status: 'manual_entry', route: { path: 'device', reason: 'redact_error' } });
+    expect(calls.cloud).toHaveLength(0);
   });
   it('reports steps in order for an escalated bill', async () => {
     const { deps, hooks } = setup({ deviceOut: BAD_TOTAL });

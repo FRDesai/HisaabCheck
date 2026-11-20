@@ -2,7 +2,7 @@ export type PathTaken = 'device' | 'cloud';
 export type Reason =
   | 'passed' | 'total_mismatch' | 'invalid_gstin' | 'low_confidence'
   | 'device_timeout' | 'device_error' | 'invalid_json' | 'no_device_model'
-  | 'cloud_only_mode' | 'cloud_error' | 'ocr_error' | 'user_kept_local';
+  | 'cloud_only_mode' | 'cloud_error' | 'ocr_error' | 'user_kept_local' | 'redact_error';
 export type BillStatus = 'draft' | 'approved' | 'rejected' | 'manual_entry';
 export type RoutingMode = 'smart' | 'device_only' | 'cloud_only';
 export type Availability = 'available' | 'downloadable' | 'downloading' | 'unavailable';

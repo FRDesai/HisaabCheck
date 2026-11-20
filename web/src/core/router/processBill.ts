@@ -1,4 +1,4 @@
-import type { BillStatus, CheckResult, Clock, CloudModel, Config, ConsentResult, DeviceModel, Extraction, ImageInput,
+import type { Availability, BillStatus, CheckResult, Clock, CloudModel, Config, ConsentResult, DeviceModel, Extraction, ImageInput,
   Ocr, OcrWord, Painter, PathTaken, ProcessedBill, Reason, RedactionPlan, Step } from '../types';
 import { CLOUD_COST_PER_CALL_USD, DEVICE_TIMEOUT_MS } from '../config/defaults';
 import { cloudPrompt, devicePrompt } from '../extract/prompts';
@@ -44,7 +44,11 @@ export async function processBill(img: ImageInput, deps: RouterDeps, hooks: Rout
   hooks.onStep('availability');
   let reason: Reason | null = null;
   if (cfg.routingMode === 'cloud_only') reason = 'cloud_only_mode';
-  else if ((await deps.device.availability()) !== 'available') reason = 'no_device_model';
+  else {
+    let avail: Availability = 'unavailable';
+    try { avail = await deps.device.availability(); } catch { /* treat as unavailable */ }
+    if (avail !== 'available') reason = 'no_device_model';
+  }
 
   if (!reason) {
     hooks.onStep('device_read');
@@ -72,13 +76,19 @@ export async function processBill(img: ImageInput, deps: RouterDeps, hooks: Rout
   if (cfg.maskPii) {
     const shield = runShield(ocr.words, cfg.consentOcrThreshold);
     plan = planRedaction(ocr.words, shield, img.width, img.height);
-    toSend = await deps.painter.paint(img.blob, plan.boxes);
-    if (shield.uncertain) {
-      hooks.onStep('awaiting_consent');
-      const c = await hooks.askConsent(toSend, plan);
-      if (!c.send) return finish('device', 'user_kept_local', 'manual_entry');
-      toSend = c.image;
+    try {
+      toSend = await deps.painter.paint(img.blob, plan.boxes);
+      if (shield.uncertain) {
+        hooks.onStep('awaiting_consent');
+        const c = await hooks.askConsent(toSend, plan);
+        if (!c.send) return finish('device', 'user_kept_local', 'manual_entry');
+        toSend = c.image;
+      }
+    } catch {
+      return finish('device', 'redact_error', 'manual_entry');
     }
+    // Fail closed: never send the original image when masking is on.
+    if (toSend === img.blob) return finish('device', 'redact_error', 'manual_entry');
   }
   redacted = toSend;
 

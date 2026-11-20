@@ -23,20 +23,29 @@ function wordsIn(line: Line, start: number, end: number): number[] {
 const PAN = /\b[A-Z]{3}[ABCFGHLJPT][A-Z]\d{4}[A-Z]\b/g;
 const AADHAAR = /\b[2-9]\d{3}\s?\d{4}\s?\d{4}\b/g;
 const IFSC = /\b[A-Z]{4}0[A-Z0-9]{6}\b/g;
-const MOBILE = /(?:\+?91[\s-]?)?\b[6-9]\d{4}\s?\d{5}\b/g;
+const MOBILE = /(?<!\d)(?:\+?91[\s-]?|0)?[6-9]\d{4}[\s-]?\d{5}(?!\d)/g;
 const LANDLINE = /\b0\d{2,4}[\s-]?\d{3,4}[\s-]?\d{4}\b/g;
-const BANK = /\b\d{9,18}\b/g;
-const PHONE_LABEL = /\b(MOB(ILE)?|PH(ONE)?|TEL|CONTACT)\b/;
-const BANK_LABEL = /(\bA\/C\b|\bACCOUNT\b|\bACC\.?\s*NO\b)/;
-const ANY_LABEL = /(\bPAN\b|\bAADHAA?R\b|\bA\/C\b|\bACCOUNT\b|\bMOB(ILE)?\b|\bPH(ONE)?\b|\bTEL\b|\bCONTACT\b|\bIFSC\b)/;
+const BANK = /\b\d(?:[\s-]?\d){8,17}\b/g;
+const LABELS: Record<Exclude<PiiType, never>, RegExp> = {
+  PAN: /\bPAN\b/g,
+  AADHAAR: /\bAADHAA?R\b/g,
+  IFSC: /\bIFSC\b/g,
+  PHONE: /\b(?:MOB(?:ILE)?|PH(?:ONE)?|TEL|CELL|CONTACT)\b/g,
+  BANK_ACCOUNT: /\bACC(?:OUNT|T)?\.?\s*NO\b|\bACCOUNT\b|\bACCT\b|\bA\/C\b|\bAC\s*NO\b/g,
+};
 const PARTIAL = /\b[A-Z]{5}\d{1,3}\b/;
 const PII_LIKE = /\d{3,}|[A-Z]{3,}\d/;
+
+function hasLabel(text: string, type: PiiType): boolean {
+  return new RegExp(LABELS[type].source).test(text);
+}
 
 export function runShield(words: OcrWord[], consentOcrThreshold: number): ShieldResult {
   const lines = buildLines(words);
   const gstinWords = new Set<number>();
   const claimed = new Set<number>();
   const matches: PiiMatch[] = [];
+  const meta: Array<{ type: PiiType; li: number; start: number }> = [];
   const reasons: string[] = [];
 
   const find = (li: number, re: RegExp, type: PiiType, ok: (m: string) => boolean = () => true) => {
@@ -46,6 +55,7 @@ export function runShield(words: OcrWord[], consentOcrThreshold: number): Shield
       if (idx.some((i) => claimed.has(i) || gstinWords.has(i)) || !ok(m[0])) continue;
       idx.forEach((i) => claimed.add(i));
       matches.push({ type, wordIndexes: idx });
+      meta.push({ type, li, start: m.index! });
     }
   };
 
@@ -61,14 +71,24 @@ export function runShield(words: OcrWord[], consentOcrThreshold: number): Shield
     find(li, IFSC, 'IFSC');
     find(li, PAN, 'PAN');
     find(li, MOBILE, 'PHONE');
-    if (PHONE_LABEL.test(line.text)) find(li, LANDLINE, 'PHONE');
-    if (BANK_LABEL.test(line.text) || BANK_LABEL.test(prev)) find(li, BANK, 'BANK_ACCOUNT');
+    if (hasLabel(line.text, 'PHONE')) find(li, LANDLINE, 'PHONE');
+    if (hasLabel(line.text, 'BANK_ACCOUNT') || hasLabel(prev, 'BANK_ACCOUNT')) find(li, BANK, 'BANK_ACCOUNT');
   });
 
-  const lineHasMatch = (li: number) =>
-    matches.some((m) => m.wordIndexes.some((i) => words[i].line === li));
   lines.forEach((line, li) => {
-    if (ANY_LABEL.test(line.text) && !lineHasMatch(li) && !lineHasMatch(li + 1)) reasons.push(`label_without_value:${li}`);
+    // Each label occurrence needs its own value of the SAME type, after it on the line or on the next line.
+    for (const type of Object.keys(LABELS) as PiiType[]) {
+      const occ = [...line.text.matchAll(new RegExp(LABELS[type].source, 'g'))];
+      occ.forEach((o, k) => {
+        const from = o.index! + o[0].length;
+        const to = occ[k + 1]?.index ?? Infinity;
+        const last = k === occ.length - 1;
+        const ok = meta.some(
+          (m) => m.type === type && ((m.li === li && m.start >= from && m.start < to) || (last && m.li === li + 1)),
+        );
+        if (!ok) reasons.push(`label_without_value:${li}`);
+      });
+    }
     for (const s of line.spans) {
       if (claimed.has(s.word) || gstinWords.has(s.word)) continue;
       const t = line.text.slice(s.start, s.end);

@@ -15,14 +15,14 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 
-/** Same string as CONSENT_VERSION in web/src/adapters/store.ts. */
-const val CONSENT_VERSION = "2026-11-v1"
+/** The owner statement differs from the CA statement on the web (2026-11-v1), so it has its own version. */
+const val CONSENT_VERSION = "2026-11-v1-owner"
 
 private const val INVITE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 private const val INVITE_LENGTH = 8
 private const val WRITE_TIMEOUT_MS = 15_000L
 
-enum class SessionFailure { BadCodeFormat, UnknownCode, AlreadyUsed, NoConnection, Other }
+enum class SessionFailure { BadCodeFormat, UnknownCode, AlreadyUsed, CodeNoLongerWorks, NoConnection, Other }
 
 /** A failure the screens can explain in plain words. It never carries a phone number, uid or code. */
 class SessionException(val failure: SessionFailure, cause: Throwable? = null) : Exception(failure.name, cause)
@@ -44,7 +44,7 @@ class SessionStore {
      */
     suspend fun ensureUser(uid: String, phone: String): String? {
         val ref = db.collection("users").document(uid)
-        val snap = try { ref.get().awaitTask() } catch (e: Exception) { throw mapFailure(e) }
+        val snap = try { ref.get().awaitTask() } catch (e: CancellationException) { throw e } catch (e: Exception) { throw mapFailure(e) }
         if (snap.exists()) return snap.getString("consentVersion")
         ref.set(mapOf("role" to "owner", "phone" to phone, "createdAt" to FieldValue.serverTimestamp()))
             .addOnFailureListener { /* surfaced later by recordConsent */ }
@@ -71,17 +71,27 @@ class SessionStore {
         }
     }
 
-    /** The shop whose ownerUid is this user, or null. */
+    /**
+     * The shop whose ownerUid is this user, or null when the server says there is none. The server is asked first:
+     * an offline query would otherwise return an empty cached result and look like "no shop". If the server cannot
+     * be reached, a cached hit is accepted; an empty cache is NoConnection, never "no shop".
+     */
     suspend fun findShop(uid: String): Shop? {
+        val query = db.collection("shops").whereEqualTo("ownerUid", uid).limit(1)
         try {
-            val q = db.collection("shops").whereEqualTo("ownerUid", uid).limit(1).get().awaitTask()
-            return q.documents.firstOrNull()?.let { toShop(it) }
-        } catch (e: SessionException) {
-            throw e
+            return query.get(Source.SERVER).awaitTask().documents.firstOrNull()?.let { toShop(it) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            throw mapFailure(e)
+            val cached = try {
+                query.get(Source.CACHE).awaitTask().documents.firstOrNull()?.let { toShop(it) }
+            } catch (e2: CancellationException) {
+                throw e2
+            } catch (e2: Exception) {
+                null
+            }
+            if (cached != null) return cached
+            throw SessionException(SessionFailure.NoConnection, e)
         }
     }
 
@@ -101,9 +111,16 @@ class SessionStore {
                 try {
                     shopRef.update(mapOf("ownerUid" to uid, "claimedWith" to code)).awaitTask()
                 } catch (e: FirebaseFirestoreException) {
+                    if (e.code == FirebaseFirestoreException.Code.NOT_FOUND) throw SessionException(SessionFailure.CodeNoLongerWorks, e)
                     if (e.code != FirebaseFirestoreException.Code.PERMISSION_DENIED) throw e
                     // A refusal. If a retry finds we already own this shop, the earlier write went through.
-                    val mine = try { shopRef.get().awaitTask().getString("ownerUid") == uid } catch (e2: Exception) { false }
+                    val mine = try {
+                        shopRef.get().awaitTask().getString("ownerUid") == uid
+                    } catch (e2: CancellationException) {
+                        throw e2
+                    } catch (e2: Exception) {
+                        false
+                    }
                     if (!mine) throw SessionException(SessionFailure.AlreadyUsed, e)
                 }
                 true

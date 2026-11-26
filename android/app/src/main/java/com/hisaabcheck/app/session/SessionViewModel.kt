@@ -23,6 +23,9 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -56,7 +59,11 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
     private val _ui = MutableStateFlow(SessionUi())
     val ui: StateFlow<SessionUi> = _ui.asStateFlow()
 
-    /** Set when a signed-in user's state could not be worked out (for example offline). State stays Loading; call [retry]. */
+    /**
+     * Non-null when a signed-in user's state could not be worked out (for example offline). [state] then stays
+     * [SessionState.Loading]. The wiring MUST, while state is Loading and this is non-null, render: the message,
+     * a "Try again" button calling [retry], and a "Sign out" button calling [signOut]. Otherwise the owner is stuck.
+     */
     private val _loadError = MutableStateFlow<String?>(null)
     val loadError: StateFlow<String?> = _loadError.asStateFlow()
 
@@ -67,6 +74,8 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
 
     private var resolveJob: Job? = null
     private var actionJob: Job? = null
+    private var signInJob: Job? = null
+    private var watchdog: Job? = null
     private var activeUid: String? = null
 
     private val authListener = FirebaseAuth.AuthStateListener { onUser(it.currentUser) }
@@ -74,14 +83,18 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
     /** Holds no Activity or Composable. */
     private val callbacks = object : PhoneAuthProvider.OnVerificationStateChangedCallbacks() {
         override fun onVerificationCompleted(credential: PhoneAuthCredential) {
+            watchdog?.cancel()
+            if (_state.value !is SessionState.SignedOut) return
             signIn(credential, afterCode = false)
         }
 
         override fun onVerificationFailed(e: FirebaseException) {
+            watchdog?.cancel()
             _ui.update { it.copy(busy = false, error = sendError(e)) }
         }
 
         override fun onCodeSent(id: String, token: PhoneAuthProvider.ForceResendingToken) {
+            watchdog?.cancel()
             verificationId = id
             resendToken = token
             _ui.update { it.copy(codeSent = true, phone = pendingPhone.orEmpty(), busy = false, error = null) }
@@ -93,6 +106,7 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
     }
 
     override fun onCleared() {
+        watchdog?.cancel()
         auth.removeAuthStateListener(authListener)
     }
 
@@ -101,7 +115,8 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
     /** Sends the SMS code. [activity] is used for this call only (the SDK may open a reCAPTCHA page with it). */
     fun sendCode(activity: Activity, rawPhone: String) {
         if (_ui.value.busy) return
-        val phone = rawPhone.filter { it != ' ' && it != '-' }
+        var phone = rawPhone.filter { it != ' ' && it != '-' }
+        if (phone.startsWith("+910")) phone = "+91" + phone.substring(4) // a trunk zero typed after +91
         if (!Regex("^\\+[1-9][0-9]{7,14}$").matches(phone)) {
             _ui.update { it.copy(error = "Enter the number with the country code, like +91 98765 43210.") }
             return
@@ -116,15 +131,24 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
             .setActivity(activity)
             .setCallbacks(callbacks)
         if (token != null) builder.setForceResendingToken(token)
+        // If no callback ever arrives (Activity stopped, reCAPTCHA page abandoned), do not leave the owner stuck.
+        watchdog?.cancel()
+        watchdog = viewModelScope.launch {
+            delay(70_000)
+            _ui.update {
+                if (it.busy) it.copy(busy = false, error = "That took too long. Check your connection and try again.") else it
+            }
+        }
         try {
             PhoneAuthProvider.verifyPhoneNumber(builder.build())
         } catch (e: Exception) {
+            watchdog?.cancel()
             _ui.update { it.copy(busy = false, error = "Could not send the code. Please try again.") }
         }
     }
 
     fun verifyCode(rawCode: String) {
-        if (_ui.value.busy) return
+        if (_ui.value.busy || signInJob?.isActive == true) return
         val code = rawCode.trim()
         val id = verificationId
         if (code.length != 6 || !code.all { it in '0'..'9' }) {
@@ -152,8 +176,9 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
     }
 
     private fun signIn(credential: PhoneAuthCredential, afterCode: Boolean) {
+        if (signInJob?.isActive == true) return // one sign-in at a time
         _ui.update { it.copy(busy = true, error = null) }
-        viewModelScope.launch {
+        signInJob = viewModelScope.launch {
             try {
                 auth.signInWithCredential(credential).awaitTask()
                 // The auth listener now moves the state on; the screen is replaced.
@@ -161,6 +186,8 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                ensureActive()
+                if (_state.value !is SessionState.SignedOut) return@launch // a late failure must not land on a later screen
                 _ui.update { it.copy(busy = false, error = if (afterCode) codeError(e) else sendError(e)) }
             }
         }
@@ -168,6 +195,7 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
 
     fun signOut() {
         actionJob?.cancel()
+        signInJob?.cancel()
         auth.signOut() // the listener resets the state to SignedOut
     }
 
@@ -180,11 +208,23 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
         actionJob = viewModelScope.launch {
             try {
                 store.recordConsent(s.uid)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                ensureActive()
+                _ui.update { it.copy(busy = false, error = consentError(e)) }
+                return@launch
+            }
+            // Consent is saved. A failure from here on is a load problem, not a consent problem.
+            try {
                 advance(s.uid)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _ui.update { it.copy(busy = false, error = consentError(e)) }
+                ensureActive()
+                _state.value = SessionState.Loading
+                _ui.update { SessionUi() }
+                _loadError.value = loadErrorText(e)
             }
         }
     }
@@ -201,12 +241,13 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                ensureActive()
                 _ui.update { it.copy(busy = false, error = linkError(e)) }
             }
         }
     }
 
-    /** Try again after [loadError]. */
+    /** Try again after [loadError]: works the signed-in user's state out again. See [loadError] for what the wiring must show. */
     fun retry() {
         val user = auth.currentUser ?: return
         resolve(user)
@@ -241,6 +282,7 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
         resolveJob = viewModelScope.launch {
             try {
                 val consent = store.ensureUser(uid, phone)
+                ensureActive()
                 if (consent != CONSENT_VERSION) {
                     _state.value = SessionState.NeedsConsent(uid)
                     _ui.update { SessionUi() }
@@ -250,6 +292,7 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                ensureActive() // a cancelled or superseded job must not write state
                 _loadError.value = loadErrorText(e)
             }
         }
@@ -258,6 +301,7 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
     /** After consent: look for the linked shop and set the next state. */
     private suspend fun advance(uid: String) {
         val shop = store.findShop(uid)
+        currentCoroutineContext().ensureActive()
         _state.value = if (shop == null) SessionState.NeedsShop(uid) else SessionState.Ready(uid, shop)
         _ui.update { SessionUi() }
     }
@@ -289,6 +333,7 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
     private fun linkError(e: Exception): String = when ((e as? SessionException)?.failure) {
         SessionFailure.BadCodeFormat -> "That code does not look right. It has 8 letters and numbers."
         SessionFailure.UnknownCode -> "We could not find that code. Check it with your CA and try again."
+        SessionFailure.CodeNoLongerWorks -> "This code no longer works. Ask your CA for a new code."
         SessionFailure.AlreadyUsed -> "This code has already been used or is more than 7 days old. Ask your CA for a new code."
         SessionFailure.NoConnection -> "No connection. Check your internet and try again."
         else -> "Could not link your shop. Please try again."

@@ -22,8 +22,9 @@ import androidx.compose.ui.unit.dp
 import com.hisaabcheck.app.session.SessionViewModel
 
 /**
- * Wording is the web's ConsentPage (CONSENT_VERSION 2026-11-v1), changed only for who is addressed:
- * "your clients" -> "your shop", "this computer" -> "this phone", and the photo-storage switch belongs to the CA.
+ * Wording is the web's ConsentPage, changed for the owner: "your clients" -> "your shop", "this computer" -> "this phone",
+ * the photo-storage switch belongs to the CA, plus a line that the CA can see the bills, and deletion is asked of the CA.
+ * Because it differs from the CA statement, it is recorded as its own version (see CONSENT_VERSION).
  */
 @Composable
 fun ConsentScreen(vm: SessionViewModel) {
@@ -40,9 +41,10 @@ fun ConsentScreen(vm: SessionViewModel) {
         )
         listOf(
             "Bills are read on this phone when possible.",
+            "Your CA can see the bills you send and the details read from them.",
             "If a bill needs the cloud, PAN, Aadhaar, phone and bank numbers are blacked out first.",
             "Photos are not stored unless your CA turns that on for your shop. Data is kept in India (Mumbai).",
-            "You can withdraw consent by signing out and asking us to delete your data.",
+            "You can withdraw consent by signing out and asking your CA to delete your data.",
         ).forEach { Text("\u2022  $it", style = MaterialTheme.typography.bodyLarge) }
         LiveError(ui.error)
         Button(onClick = { vm.agree() }, enabled = !ui.busy, modifier = buttonModifier) {

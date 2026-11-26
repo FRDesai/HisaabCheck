@@ -2,7 +2,7 @@
 
 State at 2026-11-26, branch `feat/subproject-b`, after the final review fixes (head `743a781` plus this docs commit).
 Verified here: 310 unit tests in 29 files, 32 Firestore rules tests (emulator, 1 file), production build, lint (0 errors, 1 old warning in `adapters/firebaseAi.ts`).
-Not verified: anything against a real Firebase project or in Chrome. Nothing in sub-project B has been rendered in a browser, and the repo has no React component tests. The Tally XML has never been imported into a real Tally. Nothing is deployed.
+Not verified: anything against a real Firebase project. The web app has since been run once against local emulators in headless Chrome (it found a bank-account leak, since fixed); the cloud read and the on-device AI have never been exercised. The repo has no React component tests. The Tally XML has never been imported into a real Tally. Nothing is deployed.
 
 ## Check first against real Firebase and Chrome (in this order)
 

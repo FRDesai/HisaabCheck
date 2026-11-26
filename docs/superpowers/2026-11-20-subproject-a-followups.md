@@ -104,7 +104,7 @@ Task 12: minor (deferred): keyboard users can only black out the bottom third (s
 Task 12: complete (commits b56c940..8489a88, review clean after 1 fix round; runtime unverified)
 Task 13: fix round 1/5 (5 addressed + extras, 0 open — PII counted only when sent (estCostUsd>0); router: unparsable cloud answer -> device/cloud_error/manual_entry so path cloud == usable cloud read (also resolves Task 7 minor); three reconciling tiles; ROUTE_LOG_LIMIT disclosed; softened "0" caption; loading/error states; commits b6f47bd..f8d0967)
 Task 13: UNVERIFIED AT RUNTIME: dashboard never rendered (5-tile grid layout unseen); live updates; mode refresh
-Task 13: minor (deferred): "Loading…" forever if profile never gets a role; estCostUsd>0 used as proxy for "sent" (breaks if cost constant set to 0); "0 raw private numbers" tile is a design claim not computed data — README must cite the real leak-check run
+Task 13: minor (deferred): "Loading…" forever if profile never gets a role; estCostUsd>0 used as proxy for "sent" (breaks if cost constant set to 0); the "0 raw private numbers" tile was a design claim, not computed data; it has since been removed and the dashboard now says it counts what was hidden and cannot count what the shield missed — README must cite the real leak-check run
 Task 13: complete (commits 8489a88..f8d0967, review clean after 1 fix round; runtime unverified)
 Task 14: fix round 1/5 (4 addressed, 0 open — README overclaims corrected; commits 035ff1c..449d156)
 Task 14: SKIPPED by user decision: Steps 2-4 (production App Check, deploy, hosted smoke test); no remote, nothing pushed

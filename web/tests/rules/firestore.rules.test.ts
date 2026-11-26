@@ -145,3 +145,57 @@ describe('bill review rules', () => {
     await assertSucceeds(updateDoc(b, { imagePath: 'shops/s1/bills/a1.jpg' }));
   });
 });
+
+describe('a reviewed bill is locked', () => {
+  const d1 = (uid: string) => doc(as(uid), 'shops/s1/bills/d1');
+  const approve = (uid: string) => ({ status: 'approved', reviewedBy: uid, reviewedAt: serverTimestamp() });
+  const reject = (uid: string, rejectNote = 'Photo is blurred') => ({ status: 'rejected', reviewedBy: uid, reviewedAt: serverTimestamp(), rejectNote });
+  const reopen = { status: 'draft', reviewedBy: deleteField(), reviewedAt: deleteField(), rejectNote: deleteField(), approvedWithFailedChecks: deleteField() };
+
+  it('approving a draft still passes', async () => {
+    await assertSucceeds(updateDoc(d1('alice'), approve('alice')));
+  });
+  it('a full overwrite of an approved bill (Retry cloud) is refused', async () => {
+    await assertSucceeds(updateDoc(d1('alice'), approve('alice')));
+    await assertFails(setDoc(d1('alice'), { total: 118, status: 'draft', checks: null, createdAt: serverTimestamp() }));
+  });
+  it('a field edit of an approved bill is refused, with or without the review fields', async () => {
+    await assertSucceeds(updateDoc(d1('alice'), approve('alice')));
+    await assertFails(updateDoc(d1('alice'), { total: 200, checks: { total: true }, editedAt: serverTimestamp() }));
+    await assertFails(updateDoc(d1('alice'), { ...approve('alice'), total: 200 }));
+  });
+  it('a field edit of a rejected bill is refused', async () => {
+    await assertSucceeds(updateDoc(d1('alice'), reject('alice')));
+    await assertFails(updateDoc(d1('alice'), { total: 200 }));
+  });
+  it('a rejected bill cannot be flipped straight to approved', async () => {
+    await assertSucceeds(updateDoc(d1('alice'), reject('alice')));
+    await assertFails(updateDoc(d1('alice'), { ...approve('alice'), rejectNote: deleteField() }));
+    await assertFails(updateDoc(d1('alice'), { status: 'approved', rejectNote: deleteField() }));
+  });
+  it('an approved bill cannot be flipped straight to rejected', async () => {
+    await assertSucceeds(updateDoc(d1('alice'), approve('alice')));
+    await assertFails(updateDoc(d1('alice'), reject('alice')));
+  });
+  it('the late photo path still passes on an approved bill and on a draft', async () => {
+    await assertSucceeds(updateDoc(doc(as('alice'), 'shops/s1/bills/d1'), { imagePath: 'shops/s1/bills/d1.jpg' }));
+    await assertSucceeds(updateDoc(d1('alice'), approve('alice')));
+    await assertSucceeds(updateDoc(d1('alice'), { imagePath: 'shops/s1/bills/d1-2.jpg' }));
+  });
+  it('a reopen still passes from approved and from rejected, and only with review fields', async () => {
+    await assertSucceeds(updateDoc(d1('alice'), approve('alice')));
+    await assertFails(updateDoc(d1('alice'), { ...reopen, total: 200 }));
+    await assertSucceeds(updateDoc(d1('alice'), reopen));
+    await assertSucceeds(updateDoc(d1('alice'), reject('alice')));
+    await assertSucceeds(updateDoc(d1('alice'), reopen));
+  });
+  it('after a reopen the fields can be edited again', async () => {
+    await assertSucceeds(updateDoc(d1('alice'), approve('alice')));
+    await assertSucceeds(updateDoc(d1('alice'), reopen));
+    await assertSucceeds(updateDoc(d1('alice'), { total: 200, editedAt: serverTimestamp() }));
+  });
+  it('a long Devanagari reject note passes; 501 characters fail', async () => {
+    await assertFails(updateDoc(d1('alice'), reject('alice', 'क'.repeat(501))));
+    await assertSucceeds(updateDoc(d1('alice'), reject('alice', 'का'.repeat(200))));
+  });
+});

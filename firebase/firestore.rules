@@ -23,6 +23,17 @@ service cloud.firestore {
             || (d.rejectNote is string && d.rejectNote.size() >= 1 && d.rejectNote.size() <= 500));
     }
 
+    // A reviewed (approved or rejected) bill is locked: only the late photo path may be added, or the bill
+    // reopened to draft by clearing the review fields. Anything else (a field edit, a full overwrite from a
+    // re-save, a straight flip between approved and rejected) must go through a reopen first.
+    function reviewedBillUpdateOk() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return !(resource.data.get('status', 'draft') in ['approved', 'rejected'])
+        || changed.hasOnly(['imagePath'])
+        || (request.resource.data.status == 'draft'
+            && changed.hasOnly(['status', 'reviewedBy', 'reviewedAt', 'rejectNote', 'approvedWithFailedChecks']));
+    }
+
     match /users/{userId} {
       allow read: if signedIn() && (uid() == userId || isAdmin());
       allow create: if signedIn() && uid() == userId && request.resource.data.role == 'ca';
@@ -36,7 +47,8 @@ service cloud.firestore {
 
       match /bills/{billId} {
         allow read, delete: if ownsShop(shopId);
-        allow create, update: if ownsShop(shopId) && validBill(request.resource.data);
+        allow create: if ownsShop(shopId) && validBill(request.resource.data);
+        allow update: if ownsShop(shopId) && validBill(request.resource.data) && reviewedBillUpdateOk();
       }
     }
 

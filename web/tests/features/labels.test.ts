@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { badgeText, badgeTone, CHECK_MSG, FIELD_CHECK, FIELDS, REASON } from '../../src/features/result/labels';
+import { badgeText, badgeTone, CHECK_MSG, CONFIRM_MSG, FIELD_CHECK, FIELDS, REASON } from '../../src/features/result/labels';
 
 describe('labels', () => {
   it('badge text follows the route', () => {
@@ -19,5 +19,8 @@ describe('labels', () => {
     expect(Object.keys(CHECK_MSG).sort()).toEqual(['date', 'gstin', 'required', 'taxSplit', 'total']);
     expect(FIELD_CHECK.supplierGstin).toBe('gstin');
     expect(REASON.redact_error).toBe('could not hide private numbers safely');
+  });
+  it('names every item the CA can confirm, including the taxable value', () => {
+    expect(CONFIRM_MSG).toEqual({ total: CHECK_MSG.total, gstin: CHECK_MSG.gstin, taxSplit: CHECK_MSG.taxSplit, taxable: 'Taxable value + tax \u2260 total' });
   });
 });

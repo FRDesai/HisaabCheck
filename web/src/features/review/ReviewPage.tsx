@@ -14,7 +14,8 @@ export default function ReviewPage() {
   // undefined = still loading, null = no such bill
   const [bill, setBill] = useState<BillDoc | null | undefined>(undefined);
   const [failed, setFailed] = useState(false);
-  const queue = useRef<BillDoc[]>([]);
+  // The shop's newest bills; null until the list has loaded, or after it failed.
+  const queue = useRef<BillDoc[] | null>(null);
 
   useEffect(() => {
     setBill(undefined); setFailed(false);
@@ -24,15 +25,19 @@ export default function ReviewPage() {
 
   // The shop's bill list, only to know which bill comes next. A failure here just ends the run at the inbox.
   useEffect(() => {
+    queue.current = null;
     if (!shopId) return;
-    return watchBills(shopId, BILL_PAGE, (b) => { queue.current = b; }, () => { queue.current = []; });
+    return watchBills(shopId, BILL_PAGE, (b) => { queue.current = b; }, () => { queue.current = null; });
   }, [shopId]);
 
   const inbox = `/shops/${shopId}/bills`;
   function onReviewed() {
-    const next = billId ? nextToReview(queue.current, billId) : null;
+    const list = queue.current;
+    const next = list && billId ? nextToReview(list, billId) : null;
     if (next) navigate(`${inbox}/${next}`);
-    else navigate(inbox, { state: { notice: 'All bills reviewed.' } });
+    // "All bills reviewed" only when the whole list is known: loaded, and shorter than the page limit.
+    else if (list && list.length < BILL_PAGE) navigate(inbox, { state: { notice: 'All bills reviewed.' } });
+    else navigate(inbox);
   }
 
   return (

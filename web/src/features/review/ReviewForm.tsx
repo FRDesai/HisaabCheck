@@ -3,11 +3,11 @@ import { approveBill, rejectBill, reopenBill, saveReviewFields } from '../../ada
 import { runChecks } from '../../core/checks/checks';
 import { parseConfig } from '../../core/config/parseConfig';
 import type { BillDoc } from '../../core/review/billDoc';
-import { allowedActions, approvalBlockers, needsConfirmation, REJECT_NOTE_MAX, validRejectNote } from '../../core/review/decision';
+import { allowedActions, approvalBlockers, confirmationItems, REJECT_NOTE_MAX, validRejectNote, type ConfirmItem } from '../../core/review/decision';
 import type { BillStatus, Extraction } from '../../core/types';
 import FieldInputs, { CheckMessages } from '../result/FieldInputs';
 import { parseForm, toFormText, type FieldKey } from '../result/fields';
-import { badgeText, badgeTone, CHECK_MSG } from '../result/labels';
+import { badgeText, badgeTone, CHECK_MSG, CONFIRM_MSG } from '../result/labels';
 
 const STATUS_LABEL: Record<BillStatus, string> = { draft: 'To review', manual_entry: 'Manual entry — fill in the fields', approved: 'Approved', rejected: 'Rejected' };
 type Busy = 'save' | 'approve' | 'reject' | 'reopen' | null;
@@ -32,7 +32,9 @@ export default function ReviewForm({ shopId, bill, uid, onReviewed }: { shopId: 
   const ownWrite = useRef(false);
   const writeSeq = useRef(0);
   const slowTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => clearTimeout(slowTimer.current), []);
+  // A write can finish after the CA has left this bill (offline, then back online): it must not navigate or set state then.
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; clearTimeout(slowTimer.current); }; }, []);
   const incoming = JSON.stringify(bill.extraction);
   const seen = useRef(incoming);
   const seenStatus = useRef(bill.status);
@@ -69,7 +71,7 @@ export default function ReviewForm({ shopId, bill, uid, onReviewed }: { shopId: 
   const invalid: FieldKey[] = parsed.ok ? [] : parsed.invalid;
   const checks = !editable ? bill.checks : parsed.ok ? parsed.checks : null;
   const blockers = parsed.ok ? approvalBlockers(parsed.checks) : [];
-  const soft = parsed.ok ? needsConfirmation(parsed.checks) : [];
+  const soft: ConfirmItem[] = parsed.ok ? confirmationItems(parsed.checks, parsed.value) : [];
   const softKey = soft.join(',');
   const confirmed = softKey !== '' && confirmedKey === softKey;
   // A tick covers exactly the failures listed when it was made; any other set needs a fresh tick.
@@ -85,10 +87,11 @@ export default function ReviewForm({ shopId, bill, uid, onReviewed }: { shopId: 
     clearTimeout(slowTimer.current);
     slowTimer.current = setTimeout(() => setSlow(true), 4000);
     let failed = false;
-    try { await write(); after(); }
-    catch { failed = true; setError('Could not save. Check your connection and try again. Your changes are still here.'); }
+    try { await write(); if (mounted.current) after(); }
+    catch { failed = true; if (mounted.current) setError('Could not save. Check your connection and try again. Your changes are still here.'); }
     finally {
-      clearTimeout(slowTimer.current); setSlow(false); setBusy(null);
+      clearTimeout(slowTimer.current);
+      if (mounted.current) { setSlow(false); setBusy(null); }
       if (failed) setTimeout(() => { if (writeSeq.current === seq) ownWrite.current = false; }, 1500);
       else ownWrite.current = false;
     }
@@ -112,11 +115,12 @@ export default function ReviewForm({ shopId, bill, uid, onReviewed }: { shopId: 
       </div>
       {bill.status === 'rejected' && bill.rejectNote && <p className="p-3 rounded bg-red-50 text-red-900 text-sm">Note to the client: {bill.rejectNote}</p>}
       {bill.status === 'approved' && bill.approvedWithFailedChecks.length > 0 && (
-        <p className="p-3 rounded bg-amber-50 text-amber-900 text-sm">Approved after checking against the paper copy, with: {bill.approvedWithFailedChecks.map((k) => CHECK_MSG[k as keyof typeof CHECK_MSG] ?? k).join('; ')}</p>
+        <p className="p-3 rounded bg-amber-50 text-amber-900 text-sm">Approved after checking against the paper copy, with: {bill.approvedWithFailedChecks.map((k) => CONFIRM_MSG[k as ConfirmItem] ?? k).join('; ')}</p>
       )}
       {elsewhere && <p role="status" className="p-3 rounded bg-amber-50 text-amber-900 text-sm">{elsewhere}</p>}
 
       <CheckMessages checks={checks} />
+      {editable && soft.includes('taxable') && <p className="text-red-700 text-sm">⚠ {CONFIRM_MSG.taxable}</p>}
       <FieldInputs text={text} invalid={invalid} checks={checks} disabled={!editable || busy !== null}
         onChange={(k, v) => { setSaved(false); setDirty(true); setText({ ...text, [k]: v }); }} />
 
@@ -149,7 +153,7 @@ export default function ReviewForm({ shopId, bill, uid, onReviewed }: { shopId: 
           {soft.length > 0 && blockers.length === 0 && (
             <label className="flex items-start gap-2 text-sm p-3 rounded bg-amber-50">
               <input type="checkbox" className="mt-1" checked={confirmed} onChange={(e) => setConfirmedKey(e.target.checked ? softKey : null)} />
-              <span>I have checked this bill against the paper copy. ({soft.map((k) => CHECK_MSG[k]).join('; ')})</span>
+              <span>I have checked this bill against the paper copy. ({soft.map((k) => CONFIRM_MSG[k]).join('; ')})</span>
             </label>
           )}
           <div className="flex flex-wrap gap-2">

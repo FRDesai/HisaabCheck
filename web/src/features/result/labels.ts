@@ -1,3 +1,4 @@
+import type { ConfirmItem } from '../../core/review/decision';
 import type { Checks, Extraction, Reason, RouteInfo } from '../../core/types';
 import type { FieldKey } from './fields';
 
@@ -9,6 +10,8 @@ export const REASON: Record<Reason, string> = {
   redact_error: 'could not hide private numbers safely',
 };
 export const CHECK_MSG: Record<keyof Checks, string> = { total: 'Items + tax ≠ total', gstin: 'GSTIN invalid', taxSplit: 'Tax split does not match states', date: 'Date invalid or in the future', required: 'Required field missing' };
+/** What the CA confirms against the paper copy: the soft checks, plus a taxable value that does not add up. */
+export const CONFIRM_MSG: Record<ConfirmItem, string> = { total: CHECK_MSG.total, gstin: CHECK_MSG.gstin, taxSplit: CHECK_MSG.taxSplit, taxable: 'Taxable value + tax \u2260 total' };
 export const EMPTY_EXTRACTION: Extraction = { supplierName: '', supplierGstin: '', invoiceNo: '', invoiceDate: '', placeOfSupply: '', taxableValue: 0, cgst: 0, sgst: 0, igst: 0, total: 0, confidence: 0 };
 export const FIELDS: Array<[FieldKey, string, 'text' | 'number']> = [
   ['supplierName', 'Supplier', 'text'], ['supplierGstin', 'Supplier GSTIN', 'text'], ['invoiceNo', 'Invoice no.', 'text'],

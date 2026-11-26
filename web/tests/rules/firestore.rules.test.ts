@@ -199,3 +199,210 @@ describe('a reviewed bill is locked', () => {
     await assertSucceeds(updateDoc(d1('alice'), reject('alice', 'का'.repeat(200))));
   });
 });
+
+describe('shop owners and invites', () => {
+  const CODE = 'ABCD2345';
+  const alog = (uid: string, shopId: string, caUid: string) => ({ ...log(uid, shopId), caUid, platform: 'android' });
+  const draftBill = (status: string) => ({ total: 118, status, createdAt: serverTimestamp() });
+  const approveBy = (uid: string) => ({ status: 'approved', reviewedBy: uid, reviewedAt: serverTimestamp() });
+  const reopen = { status: 'draft', reviewedBy: deleteField(), reviewedAt: deleteField(), rejectNote: deleteField(), approvedWithFailedChecks: deleteField() };
+
+  beforeEach(async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      const f = c.firestore();
+      await setDoc(doc(f, 'shops/s1'), { caUid: 'alice', shopName: 'A', gstin: '', state: '', storeImages: false, inviteCode: CODE });
+      await setDoc(doc(f, `invites/${CODE}`), { shopId: 's1', caUid: 'alice' });
+      await setDoc(doc(f, 'shops/linked'), { caUid: 'alice', shopName: 'L', gstin: '', state: '', storeImages: true, ownerUid: 'ravi', inviteCode: 'WXYZ6789' });
+      await setDoc(doc(f, 'shops/linked/bills/draft1'), { status: 'draft', total: 118 });
+      await setDoc(doc(f, 'shops/linked/bills/appr1'), { status: 'approved', total: 118, reviewedBy: 'alice', reviewedAt: new Date('2026-11-01') });
+      await setDoc(doc(f, 'shops/noinvite'), { caUid: 'alice', shopName: 'N', gstin: '', state: '', storeImages: false });
+    });
+  });
+
+  it('a user creates themselves as owner but never as admin', async () => {
+    await assertSucceeds(setDoc(doc(as('ravi2'), 'users/ravi2'), { role: 'owner' }));
+    await assertFails(setDoc(doc(as('x'), 'users/x'), { role: 'admin' }));
+    await assertFails(setDoc(doc(as('y'), 'users/y'), { role: 'superuser' }));
+    await assertSucceeds(setDoc(doc(as('carol'), 'users/carol'), { role: 'ca' }));
+  });
+  it('an owner cannot promote themselves to admin or switch role', async () => {
+    await assertSucceeds(setDoc(doc(as('ravi2'), 'users/ravi2'), { role: 'owner' }));
+    await assertFails(updateDoc(doc(as('ravi2'), 'users/ravi2'), { role: 'admin' }));
+    await assertFails(updateDoc(doc(as('ravi2'), 'users/ravi2'), { role: 'ca' }));
+  });
+
+  describe('invites', () => {
+    it('any signed-in user reads one by id; listing and anonymous reads fail', async () => {
+      await assertSucceeds(getDoc(doc(as('ravi2'), `invites/${CODE}`)));
+      await assertFails(getDocs(collection(as('ravi2'), 'invites')));
+      await assertFails(getDocs(collection(as('alice'), 'invites')));
+      await assertFails(getDoc(doc(env.unauthenticatedContext().firestore(), `invites/${CODE}`)));
+    });
+    it('an invite cannot be updated; only its CA deletes it', async () => {
+      await assertFails(updateDoc(doc(as('alice'), `invites/${CODE}`), { shopId: 's1' }));
+      await assertFails(deleteDoc(doc(as('bob'), `invites/${CODE}`)));
+      await assertFails(deleteDoc(doc(as('ravi2'), `invites/${CODE}`)));
+      await assertSucceeds(deleteDoc(doc(as('alice'), `invites/${CODE}`)));
+    });
+    it('the CA creates an invite for their own shop', async () => {
+      await assertSucceeds(setDoc(doc(as('alice'), 'invites/QRSTUV23'), { shopId: 's1', caUid: 'alice', createdAt: serverTimestamp() }));
+    });
+    it('refuses another CA\'s shop, wrong caUid, extra keys, client time, missing shop and bad ids', async () => {
+      const ok = { shopId: 's1', caUid: 'alice', createdAt: serverTimestamp() };
+      await assertFails(setDoc(doc(as('alice'), 'invites/QRSTUV23'), { ...ok, shopId: 'bobshop' }));
+      await assertFails(setDoc(doc(as('alice'), 'invites/QRSTUV23'), { ...ok, shopId: 'nope' }));
+      await assertFails(setDoc(doc(as('bob'), 'invites/QRSTUV23'), ok));
+      await assertFails(setDoc(doc(as('alice'), 'invites/QRSTUV23'), { ...ok, caUid: 'bob' }));
+      await assertFails(setDoc(doc(as('alice'), 'invites/QRSTUV23'), { ...ok, extra: 1 }));
+      await assertFails(setDoc(doc(as('alice'), 'invites/QRSTUV23'), { ...ok, createdAt: new Date() }));
+      await assertFails(setDoc(doc(as('alice'), 'invites/QRSTUV23'), { shopId: 's1', caUid: 'alice' }));
+      for (const id of ['SHORT', 'QRSTUV234', 'qrstuv23', 'QRSTUV0O', 'QRSTUV1I', 'QRSTUVL2', 'QRSTUV2-'])
+        await assertFails(setDoc(doc(as('alice'), `invites/${id}`), ok));
+    });
+  });
+
+  describe('linking an owner', () => {
+    const s1 = (uid: string) => doc(as(uid), 'shops/s1');
+    it('passes with the right code and own uid', async () => {
+      await assertSucceeds(updateDoc(s1('ravi2'), { ownerUid: 'ravi2', claimedWith: CODE }));
+      await assertSucceeds(getDoc(s1('ravi2')));
+    });
+    it('fails with a wrong code or no code', async () => {
+      await assertFails(updateDoc(s1('ravi2'), { ownerUid: 'ravi2', claimedWith: 'ZZZZ2222' }));
+      await assertFails(updateDoc(s1('ravi2'), { ownerUid: 'ravi2' }));
+    });
+    it('fails when setting someone else as owner', async () => {
+      await assertFails(updateDoc(s1('ravi2'), { ownerUid: 'mallory', claimedWith: CODE }));
+    });
+    it('fails when any other field changes in the same write', async () => {
+      await assertFails(updateDoc(s1('ravi2'), { ownerUid: 'ravi2', claimedWith: CODE, shopName: 'Mine' }));
+      await assertFails(updateDoc(s1('ravi2'), { ownerUid: 'ravi2', claimedWith: CODE, caUid: 'ravi2' }));
+      await assertFails(updateDoc(s1('ravi2'), { ownerUid: 'ravi2', claimedWith: CODE, inviteCode: 'ZZZZ2222' }));
+      await assertFails(updateDoc(s1('ravi2'), { ownerUid: 'ravi2', claimedWith: CODE, storeImages: true }));
+    });
+    it('fails for a second link on a linked shop, by anyone', async () => {
+      await assertSucceeds(updateDoc(s1('ravi2'), { ownerUid: 'ravi2', claimedWith: CODE }));
+      await assertFails(updateDoc(s1('ravi3'), { ownerUid: 'ravi3', claimedWith: CODE }));
+      await assertFails(updateDoc(s1('ravi2'), { ownerUid: 'ravi2', claimedWith: CODE, x: 1 }));
+      await assertFails(updateDoc(doc(as('ravi3'), 'shops/linked'), { ownerUid: 'ravi3', claimedWith: 'WXYZ6789' }));
+    });
+    it('fails on a shop that has no invite code', async () => {
+      await assertFails(updateDoc(doc(as('ravi2'), 'shops/noinvite'), { ownerUid: 'ravi2', claimedWith: 'ABCD2345' }));
+      await assertFails(updateDoc(doc(as('ravi2'), 'shops/noinvite'), { ownerUid: 'ravi2', claimedWith: null }));
+    });
+    it('does not let the link write be used by anonymous users or to create a shop', async () => {
+      await assertFails(updateDoc(doc(env.unauthenticatedContext().firestore(), 'shops/s1'), { ownerUid: 'x', claimedWith: CODE }));
+      await assertFails(setDoc(doc(as('ravi2'), 'shops/new'), { ownerUid: 'ravi2', claimedWith: CODE }));
+    });
+    it('the CA can still update their own shop after the owner links, and cannot hand it to a stranger via caUid', async () => {
+      await assertSucceeds(updateDoc(s1('ravi2'), { ownerUid: 'ravi2', claimedWith: CODE }));
+      await assertSucceeds(updateDoc(s1('alice'), { shopName: 'Renamed' }));
+      await assertFails(updateDoc(s1('alice'), { caUid: 'bob' }));
+    });
+  });
+
+  describe('reading', () => {
+    it('the owner reads their shop and its bills; others cannot', async () => {
+      await assertSucceeds(getDoc(doc(as('ravi'), 'shops/linked')));
+      await assertSucceeds(getDoc(doc(as('ravi'), 'shops/linked/bills/draft1')));
+      await assertSucceeds(getDocs(collection(as('ravi'), 'shops/linked/bills')));
+      await assertFails(getDoc(doc(as('other'), 'shops/linked')));
+      await assertFails(getDoc(doc(as('other'), 'shops/linked/bills/draft1')));
+      await assertFails(getDocs(collection(as('other'), 'shops/linked/bills')));
+    });
+    it('an owner cannot read a shop they do not own', async () => {
+      await assertFails(getDoc(doc(as('ravi'), 'shops/s1')));
+      await assertFails(getDoc(doc(as('ravi'), 'shops/bobshop')));
+      await assertFails(getDoc(doc(as('ravi'), 'shops/s1/bills/d1')));
+    });
+    it('the owner finds their shop by ownerUid', async () => {
+      await assertSucceeds(getDocs(query(collection(as('ravi'), 'shops'), where('ownerUid', '==', 'ravi'))));
+      await assertFails(getDocs(collection(as('ravi'), 'shops')));
+    });
+    it('an owner cannot delete a bill or the shop, nor change the shop', async () => {
+      await assertFails(deleteDoc(doc(as('ravi'), 'shops/linked/bills/draft1')));
+      await assertFails(deleteDoc(doc(as('ravi'), 'shops/linked')));
+      await assertFails(updateDoc(doc(as('ravi'), 'shops/linked'), { shopName: 'Mine' }));
+      await assertFails(updateDoc(doc(as('ravi'), 'shops/linked'), { ownerUid: 'ravi', claimedWith: 'WXYZ6789' }));
+    });
+  });
+
+  describe('owner bills', () => {
+    const bill = (id: string, uid = 'ravi') => doc(as(uid), `shops/linked/bills/${id}`);
+    it('creates draft and manual_entry bills', async () => {
+      await assertSucceeds(setDoc(bill('n1'), draftBill('draft')));
+      await assertSucceeds(setDoc(bill('n2'), draftBill('manual_entry')));
+    });
+    it('cannot create approved or rejected, or a bill with no or unknown status', async () => {
+      await assertFails(setDoc(bill('n3'), { ...draftBill('approved'), reviewedBy: 'ravi', reviewedAt: serverTimestamp() }));
+      await assertFails(setDoc(bill('n4'), { ...draftBill('rejected'), reviewedBy: 'ravi', reviewedAt: serverTimestamp(), rejectNote: 'x' }));
+      await assertFails(setDoc(bill('n5'), { total: 1 }));
+      await assertFails(setDoc(bill('n6'), draftBill('paid')));
+    });
+    it('cannot create a bill in a shop they do not own, nor can a stranger create in this one', async () => {
+      await assertFails(setDoc(doc(as('ravi'), 'shops/s1/bills/n7'), draftBill('draft')));
+      await assertFails(setDoc(bill('n8', 'other'), draftBill('draft')));
+    });
+    it('updates their draft, but cannot approve or reject it', async () => {
+      await assertSucceeds(updateDoc(bill('draft1'), { total: 200, editedAt: serverTimestamp() }));
+      await assertSucceeds(updateDoc(bill('draft1'), { status: 'manual_entry' }));
+      await assertFails(updateDoc(bill('draft1'), approveBy('ravi')));
+      await assertFails(updateDoc(bill('draft1'), { status: 'rejected', reviewedBy: 'ravi', reviewedAt: serverTimestamp(), rejectNote: 'no' }));
+      await assertFails(updateDoc(bill('draft1'), approveBy('alice')));
+    });
+    it('cannot change an approved bill in any way, nor reopen it', async () => {
+      await assertFails(updateDoc(bill('appr1'), { total: 5 }));
+      await assertFails(updateDoc(bill('appr1'), { imagePath: 'shops/linked/bills/appr1.jpg' }));
+      await assertFails(updateDoc(bill('appr1'), reopen));
+      await assertFails(updateDoc(bill('appr1'), { status: 'draft' }));
+      await assertFails(setDoc(bill('appr1'), draftBill('draft')));
+    });
+    it('a stranger cannot update a bill of this shop', async () => {
+      await assertFails(updateDoc(bill('draft1', 'other'), { total: 1 }));
+    });
+  });
+
+  describe('the CA on a linked shop', () => {
+    const b = (id: string) => doc(as('alice'), `shops/linked/bills/${id}`);
+    it('still approves, rejects, reopens and locks', async () => {
+      await assertSucceeds(updateDoc(b('draft1'), approveBy('alice')));
+      await assertFails(updateDoc(b('draft1'), { total: 9 }));
+      await assertSucceeds(updateDoc(b('draft1'), reopen));
+      await assertSucceeds(updateDoc(b('draft1'), { status: 'rejected', reviewedBy: 'alice', reviewedAt: serverTimestamp(), rejectNote: 'blurred' }));
+      await assertSucceeds(updateDoc(b('draft1'), reopen));
+      await assertSucceeds(updateDoc(b('appr1'), reopen));
+      await assertSucceeds(deleteDoc(b('draft1')));
+    });
+    it('an owner bill draft can be approved by the CA', async () => {
+      await assertSucceeds(setDoc(doc(as('ravi'), 'shops/linked/bills/o1'), draftBill('draft')));
+      await assertSucceeds(updateDoc(b('o1'), approveBy('alice')));
+    });
+  });
+
+  describe('route logs from Android', () => {
+    it('passes from the owner with the shop\'s caUid', async () => {
+      await assertSucceeds(setDoc(doc(as('ravi'), 'routeLogs/a1'), alog('ravi', 'linked', 'alice')));
+    });
+    it('fails with the owner as caUid, for an unowned shop, or with platform web', async () => {
+      await assertFails(setDoc(doc(as('ravi'), 'routeLogs/a2'), alog('ravi', 'linked', 'ravi')));
+      await assertFails(setDoc(doc(as('ravi'), 'routeLogs/a3'), alog('ravi', 's1', 'alice')));
+      await assertFails(setDoc(doc(as('ravi'), 'routeLogs/a4'), { ...alog('ravi', 'linked', 'alice'), platform: 'web' }));
+      await assertFails(setDoc(doc(as('ravi'), 'routeLogs/a5'), { ...alog('ravi', 'nope', 'alice'), shopId: 'nope' }));
+      await assertFails(setDoc(doc(as('other'), 'routeLogs/a6'), alog('other', 'linked', 'alice')));
+    });
+    it('the CA cannot write an android log, and the owner cannot write a web log for a CA', async () => {
+      await assertFails(setDoc(doc(as('alice'), 'routeLogs/a7'), alog('alice', 'linked', 'alice')));
+      await assertFails(setDoc(doc(as('ravi'), 'routeLogs/a8'), { ...log('alice', 'linked'), platform: 'web' }));
+    });
+    it('the CA\'s web log still passes and the CA sees the owner\'s android log', async () => {
+      await assertSucceeds(setDoc(doc(as('alice'), 'routeLogs/w1'), log('alice', 'linked')));
+      await assertSucceeds(setDoc(doc(as('ravi'), 'routeLogs/a9'), alog('ravi', 'linked', 'alice')));
+      await assertSucceeds(getDocs(query(collection(as('alice'), 'routeLogs'), where('caUid', '==', 'alice'))));
+    });
+    it('an owner cannot read route logs, including their own', async () => {
+      await assertSucceeds(setDoc(doc(as('ravi'), 'routeLogs/a10'), alog('ravi', 'linked', 'alice')));
+      await assertFails(getDoc(doc(as('ravi'), 'routeLogs/a10')));
+      await assertFails(getDocs(collection(as('ravi'), 'routeLogs')));
+    });
+  });
+});

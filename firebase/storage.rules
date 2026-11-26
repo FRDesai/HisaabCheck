@@ -3,8 +3,14 @@ service firebase.storage {
   match /b/{bucket}/o {
     match /shops/{shopId}/bills/{file} {
       function shop() { return firestore.get(/databases/(default)/documents/shops/$(shopId)).data; }
-      allow read, delete: if request.auth != null && shop().caUid == request.auth.uid;
-      allow create, update: if request.auth != null && shop().caUid == request.auth.uid
+      // The shop's CA and its linked owner may read and add photos; only the CA deletes.
+      function isCaOrOwner() {
+        return request.auth != null
+          && (shop().caUid == request.auth.uid || shop().get('ownerUid', null) == request.auth.uid);
+      }
+      allow read: if isCaOrOwner();
+      allow delete: if request.auth != null && shop().caUid == request.auth.uid;
+      allow create, update: if isCaOrOwner()
         && shop().storeImages == true
         && request.resource.size < 3 * 1024 * 1024 && request.resource.contentType == 'image/jpeg';
     }

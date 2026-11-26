@@ -11,6 +11,14 @@ service cloud.firestore {
       return signedIn() && get(/databases/$(db)/documents/shops/$(shopId)).data.caUid == uid();
     }
 
+    // The shop document's data, and whether the caller is the shop's linked owner (the phone user who typed the CA's invite code).
+    function shopData(shopId) {
+      return get(/databases/$(db)/documents/shops/$(shopId)).data;
+    }
+    function isOwnerOf(shopId) {
+      return signedIn() && shopData(shopId).get('ownerUid', null) == uid();
+    }
+
     // Review fields: a fixed status set; approve/reject only in the reviewer's own name and at server time
     // (or with the stored review time left untouched); a reject always carries a note.
     function validBill(d) {
@@ -36,32 +44,62 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if signedIn() && (uid() == userId || isAdmin());
-      allow create: if signedIn() && uid() == userId && request.resource.data.role == 'ca';
+      allow create: if signedIn() && uid() == userId && request.resource.data.role in ['ca', 'owner'];
       allow update: if signedIn() && uid() == userId && request.resource.data.role == resource.data.role;
     }
 
     match /shops/{shopId} {
-      allow read, delete: if signedIn() && resource.data.caUid == uid();
+      allow read: if signedIn() && (resource.data.get('caUid', null) == uid() || resource.data.get('ownerUid', null) == uid());
+      allow delete: if signedIn() && resource.data.caUid == uid();
       allow create: if signedIn() && request.resource.data.caUid == uid();
-      allow update: if signedIn() && resource.data.caUid == uid() && request.resource.data.caUid == uid();
+      // The CA edits their shop. Or a signed-in user links themselves as the owner, once: the write must carry the
+      // shop's own invite code in claimedWith, name the caller as owner, and change nothing else.
+      allow update: if (signedIn() && resource.data.caUid == uid() && request.resource.data.caUid == uid())
+        || (signedIn()
+            && resource.data.get('ownerUid', null) == null
+            && resource.data.get('inviteCode', null) is string
+            && request.resource.data.ownerUid == uid()
+            && request.resource.data.claimedWith == resource.data.inviteCode
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ownerUid', 'claimedWith']));
 
       match /bills/{billId} {
-        allow read, delete: if ownsShop(shopId);
-        allow create: if ownsShop(shopId) && validBill(request.resource.data);
-        allow update: if ownsShop(shopId) && validBill(request.resource.data) && reviewedBillUpdateOk();
+        allow read: if ownsShop(shopId) || isOwnerOf(shopId);
+        allow delete: if ownsShop(shopId);
+        // The owner can only create or edit unreviewed bills; approving, rejecting, reopening and deleting are the CA's.
+        allow create: if (ownsShop(shopId) && validBill(request.resource.data))
+          || (isOwnerOf(shopId) && validBill(request.resource.data)
+              && request.resource.data.status in ['draft', 'manual_entry']);
+        allow update: if (ownsShop(shopId) && validBill(request.resource.data) && reviewedBillUpdateOk())
+          || (isOwnerOf(shopId) && validBill(request.resource.data)
+              && resource.data.get('status', 'draft') in ['draft', 'manual_entry']
+              && request.resource.data.status in ['draft', 'manual_entry']);
       }
     }
 
+    // An invite code: readable by id only (never listed), written once by the CA of the shop it names.
+    match /invites/{code} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && code.matches('^[A-HJKMNP-Z2-9]{8}$')
+        && request.resource.data.keys().hasOnly(['shopId', 'caUid', 'createdAt'])
+        && request.resource.data.keys().hasAll(['shopId', 'caUid', 'createdAt'])
+        && request.resource.data.caUid == uid()
+        && request.resource.data.createdAt == request.time
+        && ownsShop(request.resource.data.shopId);
+      allow update: if false;
+      allow delete: if signedIn() && resource.data.caUid == uid();
+    }
+
     // Counts and types only; every field type-checked so a bad row cannot break the admin dashboard,
-    // server time only so a log cannot be dated into the future, and only for a shop the writer owns.
+    // server time only so a log cannot be dated into the future. From the web: the CA of the shop. From Android: the shop's
+    // linked owner, with the shop's caUid so the log shows on that CA's dashboard.
     function validRouteLog(d) {
       return d.keys().hasOnly(['billId','shopId','caUid','platform','path','reason','piiMasked',
              'piiTypes','latencyMs','estCostUsd','modelName','promptVersion','createdAt'])
         && d.keys().hasAll(['billId','shopId','caUid','platform','path','reason','piiMasked',
              'piiTypes','latencyMs','estCostUsd','modelName','promptVersion','createdAt'])
-        && d.caUid == uid()
         && d.createdAt == request.time
-        && d.platform == 'web'
         && d.path in ['device', 'cloud']
         && d.reason is string
         && d.piiTypes is list && d.piiTypes.size() <= 8
@@ -71,7 +109,9 @@ service cloud.firestore {
         && d.modelName is string
         && d.promptVersion is string
         && d.billId is string
-        && d.shopId is string && ownsShop(d.shopId);
+        && d.shopId is string
+        && ((d.platform == 'web' && d.caUid == uid() && ownsShop(d.shopId))
+            || (d.platform == 'android' && isOwnerOf(d.shopId) && d.caUid == shopData(d.shopId).caUid));
     }
 
     match /routeLogs/{logId} {

@@ -13,6 +13,8 @@ import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.PhoneAuthCredential
 import com.google.firebase.auth.PhoneAuthOptions
 import com.google.firebase.auth.PhoneAuthProvider
+import com.google.firebase.firestore.firestore
+import com.google.firebase.Firebase
 import com.hisaabcheck.app.Shop
 import com.hisaabcheck.app.adapters.CONSENT_VERSION
 import com.hisaabcheck.app.adapters.SessionException
@@ -78,6 +80,9 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
     private var watchdog: Job? = null
     private var activeUid: String? = null
 
+    /** Wipes Firestore's on-device cache after a sign-out. Work for the next user waits for it (see [signOut]). */
+    private var clearJob: Job? = null
+
     private val authListener = FirebaseAuth.AuthStateListener { onUser(it.currentUser) }
 
     /** Holds no Activity or Composable. */
@@ -103,6 +108,8 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
 
     init {
         auth.addAuthStateListener(authListener)
+        // A process that died between sign-out and the wipe must not leave the last owner's cache for the next one.
+        if (auth.currentUser == null) clearCache()
     }
 
     override fun onCleared() {
@@ -180,6 +187,7 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
         _ui.update { it.copy(busy = true, error = null) }
         signInJob = viewModelScope.launch {
             try {
+                clearJob?.join()
                 auth.signInWithCredential(credential).awaitTask()
                 // The auth listener now moves the state on; the screen is replaced.
                 _ui.update { it.copy(busy = false) }
@@ -197,6 +205,29 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
         actionJob?.cancel()
         signInJob?.cancel()
         auth.signOut() // the listener resets the state to SignedOut
+        clearCache()
+    }
+
+    /**
+     * Terminates the Firestore instance and deletes its on-device cache, so a second owner on this phone cannot read
+     * the first owner's bills. Callers must have removed their listeners first (the wiring stops "Recent bills"
+     * before calling [signOut]). After `terminate()`, `Firebase.firestore` returns a new, usable instance, and the
+     * stores look it up on every call. Sign-in and the account lookup wait for this job. A failed wipe is ignored.
+     */
+    private fun clearCache() {
+        val previous = clearJob
+        clearJob = viewModelScope.launch {
+            previous?.join()
+            try {
+                val db = Firebase.firestore
+                db.terminate().awaitTask()
+                db.clearPersistence().awaitTask()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Nothing more can be done here; the next sign-out or start tries again.
+            }
+        }
     }
 
     // ---- consent and link ----------------------------------------------------------------------------------
@@ -281,6 +312,7 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
         _loadError.value = null
         resolveJob = viewModelScope.launch {
             try {
+                clearJob?.join()
                 val consent = store.ensureUser(uid, phone)
                 ensureActive()
                 if (consent != CONSENT_VERSION) {

@@ -123,6 +123,7 @@ private fun BillRoot(shop: Shop, onSignOut: () -> Unit) {
 
     val signOut = {
         vm.done()
+        vm.stopRecent() // nothing may be listening when the session wipes and terminates Firestore
         onSignOut()
     }
 

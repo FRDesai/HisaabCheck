@@ -145,6 +145,8 @@ class BillViewModel(private val shop: Shop, app: Application) : AndroidViewModel
     private var job: Job? = null
     private var editJob: Job? = null
     private var editWrite: Deferred<Unit>? = null
+    /** The current bill's own save acknowledgement (true), refusal (false) or failure. */
+    private var billSynced: Deferred<Boolean>? = null
     private var editSeq = 0
     // All plain fields below are touched on the main thread only.
     private val captureLock = Mutex()
@@ -175,16 +177,26 @@ class BillViewModel(private val shop: Shop, app: Application) : AndroidViewModel
     private fun capturesDir() = File(getApplication<Application>().cacheDir, "captures")
 
     /** Creates an empty file for the camera and returns its FileProvider URI. File work runs off the main thread. */
-    suspend fun newCaptureUri(): Uri = withContext(Dispatchers.IO) {
-        val app = getApplication<Application>()
-        val dir = capturesDir().apply { mkdirs() }
-        val file = File.createTempFile("bill", ".jpg", dir)
+    suspend fun newCaptureUri(): Uri {
+        // Not cancellable, so a created file is never lost; if the caller was cancelled meanwhile, delete it.
+        val uri = withContext(NonCancellable + Dispatchers.IO) {
+            val app = getApplication<Application>()
+            val dir = capturesDir().apply { mkdirs() }
+            val file = File.createTempFile("bill", ".jpg", dir)
+            try {
+                FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", file)
+            } catch (e: Exception) {
+                file.delete()
+                throw e
+            }
+        }
         try {
-            FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", file)
-        } catch (e: Exception) {
-            file.delete()
+            currentCoroutineContext().ensureActive()
+        } catch (e: CancellationException) {
+            discardCapture(uri)
             throw e
         }
+        return uri
     }
 
     /** Deletes a camera capture file of ours (no-op for other URIs). */
@@ -240,6 +252,7 @@ class BillViewModel(private val shop: Shop, app: Application) : AndroidViewModel
         // A new photo starts from nothing: no earlier photo, bill id or result state can leak into it.
         photo = null
         billId = null
+        billSynced = null
         config = null
         editBase = EMPTY_EXTRACTION
         editJob?.cancel()
@@ -339,6 +352,7 @@ class BillViewModel(private val shop: Shop, app: Application) : AndroidViewModel
             return
         }
         billId = saved.billId
+        billSynced = saved.synced
         editBase = result.extraction ?: EMPTY_EXTRACTION
         _info.value = ResultInfo(
             checks = result.checks,
@@ -407,6 +421,7 @@ class BillViewModel(private val shop: Shop, app: Application) : AndroidViewModel
             return
         }
         // The write lives in viewModelScope (a supervisor), so waiting for it can time out without cancelling it.
+        val sync = billSynced
         val write = viewModelScope.async { store.updateFields(shop.id, id, value, checks) }
         editWrite = write
         fun current() = run == runId && seq == editSeq
@@ -414,14 +429,25 @@ class BillViewModel(private val shop: Shop, app: Application) : AndroidViewModel
             editBase = value
             _info.value = _info.value.copy(checks = checks, text = toFormText(value), edit = edit)
         }
-        fun failure(e: Exception) {
+        suspend fun failure(e: Exception) {
             val denied = e is FirebaseFirestoreException && e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED
-            val msg = when {
-                !denied -> CONNECTION_MESSAGE
-                _info.value.sync != SyncState.FAILED -> REVIEWED_MESSAGE
-                else -> NOT_SAVED_MESSAGE
+            val msg = if (!denied) CONNECTION_MESSAGE else {
+                // The update was refused by the server, so we are online: the bill's own save is settling.
+                // Only an acknowledged save means the refusal is the CA's review.
+                val acknowledged: Boolean? = try {
+                    withTimeoutOrNull(10_000) { sync?.await() }
+                } catch (c: CancellationException) {
+                    throw c
+                } catch (x: Exception) {
+                    false
+                }
+                when (acknowledged) {
+                    true -> REVIEWED_MESSAGE
+                    false -> NOT_SAVED_MESSAGE
+                    null -> CONNECTION_MESSAGE
+                }
             }
-            _info.value = _info.value.copy(edit = EditState.Error(msg))
+            if (current()) _info.value = _info.value.copy(edit = EditState.Error(msg))
         }
         editJob = viewModelScope.launch {
             try {
@@ -434,7 +460,10 @@ class BillViewModel(private val shop: Shop, app: Application) : AndroidViewModel
                     // Firestore has applied the edit on this phone; keep listening for the server's answer.
                     applyLocally(EditState.SavedLocally)
                     write.await()
-                    if (current()) _info.value = _info.value.copy(edit = EditState.Saved)
+                    // Only if the form still equals what was saved; typing since then leaves it unsaved.
+                    if (current() && _info.value.edit == EditState.SavedLocally && _info.value.text == toFormText(value)) {
+                        _info.value = _info.value.copy(edit = EditState.Saved)
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -457,6 +486,7 @@ class BillViewModel(private val shop: Shop, app: Application) : AndroidViewModel
         consent = null
         photo = null
         billId = null
+        billSynced = null
         config = null
         editBase = EMPTY_EXTRACTION
         _info.value = ResultInfo()

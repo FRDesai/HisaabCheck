@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -53,11 +54,13 @@ fun HomeScreen(vm: BillViewModel, shopName: String, onSignOut: () -> Unit) {
     val downloadError by vm.downloadError.collectAsState()
     val recent by vm.recent.collectAsState()
     var pendingUri by rememberSaveable { mutableStateOf<Uri?>(null) }
+    var launching by remember { mutableStateOf(false) }
     var cameraError by rememberSaveable { mutableStateOf(false) }
 
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { taken ->
         val uri = pendingUri
         pendingUri = null
+        launching = false
         if (uri != null) { if (taken) vm.onPhoto(uri) else vm.discardCapture(uri) }
     }
     val gallery = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
@@ -99,6 +102,8 @@ fun HomeScreen(vm: BillViewModel, shopName: String, onSignOut: () -> Unit) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = {
+                        if (launching) return@Button
+                        launching = true
                         cameraError = false
                         scope.launch {
                             var uri: Uri? = null
@@ -110,17 +115,18 @@ fun HomeScreen(vm: BillViewModel, shopName: String, onSignOut: () -> Unit) {
                                 throw e
                             } catch (e: Exception) {
                                 pendingUri = null
+                                launching = false
                                 uri?.let { vm.discardCapture(it) }
                                 cameraError = true
                             }
                         }
                     },
-                    enabled = canStart,
+                    enabled = canStart && !launching,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
                 ) { Text("Snap bill") }
                 OutlinedButton(
                     onClick = { gallery.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                    enabled = canStart,
+                    enabled = canStart && !launching,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
                 ) { Text("Pick from gallery") }
                 if (cameraError) {

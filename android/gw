@@ -1,11 +1,41 @@
 #!/bin/bash
 # Runs ./gradlew with one build at a time across all agents (8 GB machine).
+# The lock is the directory android/.gradle/gw.lock (mkdir is the atomic acquire);
+# it holds a pid file so a lock left by a dead process is taken over instead of waited on.
 cd "$(dirname "$0")" || exit 1
-LOCK="${TMPDIR:-/tmp}/hisaabcheck-gradle.lock"
+mkdir -p .gradle || exit 1
+LOCK="$PWD/.gradle/gw.lock"
 waited=0
+nopid=0
 until mkdir "$LOCK" 2>/dev/null; do
-  sleep 3; waited=$((waited + 3))
-  if [ "$waited" -ge 1200 ]; then echo "gw: gave up waiting for $LOCK after 20 minutes (remove it if no build is running)" >&2; exit 75; fi
+  pid=$(cat "$LOCK/pid" 2>/dev/null)
+  if [ -n "$pid" ]; then
+    nopid=0
+    if ! kill -0 "$pid" 2>/dev/null; then
+      # Remove only if the pid file still names the dead process (another waiter may have taken over).
+      if [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$pid" ]; then
+        echo "gw: removing stale lock of dead process $pid" >&2
+        rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null
+      fi
+      continue
+    fi
+  elif [ -d "$LOCK" ]; then
+    if [ "$nopid" -ge 10 ]; then
+      # rmdir only removes an empty directory, so a lock whose owner just wrote its pid survives.
+      echo "gw: removing lock with no pid file after ${nopid}s" >&2
+      rmdir "$LOCK" 2>/dev/null; nopid=0
+      continue
+    fi
+  else
+    continue
+  fi
+  sleep 1; waited=$((waited + 1))
+  [ -z "$pid" ] && nopid=$((nopid + 1))
+  if [ "$waited" -ge 1200 ]; then echo "gw: gave up waiting for $LOCK after 20 minutes (held by pid ${pid:-unknown})" >&2; exit 75; fi
 done
-trap 'rmdir "$LOCK" 2>/dev/null' EXIT INT TERM
+echo $$ > "$LOCK/pid"
+release() { if [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null; fi; }
+trap release EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 ./gradlew --console=plain "$@"

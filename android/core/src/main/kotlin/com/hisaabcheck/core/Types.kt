@@ -31,7 +31,7 @@ data class Config(
 )
 
 data class Box(val x0: Double, val y0: Double, val x1: Double, val y1: Double)
-/** confidence is on the 0–100 scale the web OCR uses. */
+/** confidence is on the 0-100 scale the web OCR uses. */
 data class OcrWord(val text: String, val bbox: Box, val confidence: Double, val line: Int)
 data class PiiMatch(val type: PiiType, val wordIndexes: List<Int>)
 data class ShieldResult(val gstinWordIndexes: List<Int>, val matches: List<PiiMatch>, val uncertain: Boolean, val uncertainReasons: List<String>)

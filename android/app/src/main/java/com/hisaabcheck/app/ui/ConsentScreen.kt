@@ -43,7 +43,7 @@ fun ConsentScreen(vm: SessionViewModel) {
             "If a bill needs the cloud, PAN, Aadhaar, phone and bank numbers are blacked out first.",
             "Photos are not stored unless your CA turns that on for your shop. Data is kept in India (Mumbai).",
             "You can withdraw consent by signing out and asking us to delete your data.",
-        ).forEach { Text("•  $it", style = MaterialTheme.typography.bodyLarge) }
+        ).forEach { Text("\u2022  $it", style = MaterialTheme.typography.bodyLarge) }
         LiveError(ui.error)
         Button(onClick = { vm.agree() }, enabled = !ui.busy, modifier = buttonModifier) {
             Text(if (ui.busy) "Saving..." else "I agree")

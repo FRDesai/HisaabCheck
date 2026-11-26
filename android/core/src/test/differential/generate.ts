@@ -148,7 +148,7 @@ function shieldCase(words: OcrWord[], threshold: number, cat?: string) {
   };
 }
 
-const randomShieldCases = Array.from({ length: 1550 }, () => shieldCase(randomWords(), pick([0.6, 0.6, 0.6, 0.5, 0.9])));
+const randomShieldCases = Array.from({ length: 1450 }, () => shieldCase(randomWords(), pick([0.6, 0.6, 0.6, 0.5, 0.9])));
 
 // ---- shield edge section: inputs the random bulk never produces
 
@@ -173,11 +173,23 @@ const linesOf = (nLines: number, f: (t: string) => string, conf: () => number = 
   return out;
 };
 const insertAt = (t: string, s: string) => { const i = int(t.length + 1); return t.slice(0, i) + s + t.slice(i); };
-const EMOJI = ['\u1F600', '\u1F1EE\u1F1F3', '\u1D7CF', '\uD800', '\uDC00', '\uDE00\uD83D', '\u200D', '\uFE0F', '\u20B9'];
+/** Astral (non-BMP) characters, each a valid surrogate pair: a real emoji, a regional-indicator flag pair, a mathematical digit. */
+const EMOJI_GRINNING = '\u{1F600}';
+const FLAG_INDIA = '\u{1F1EE}\u{1F1F3}';
+const MATH_BOLD_ONE = '\u{1D7CF}';
+const ASTRAL = [EMOJI_GRINNING, FLAG_INDIA, MATH_BOLD_ONE];
+/** Unpaired or reversed surrogate code units: kept apart from the astral set. */
+const LONE_SURROGATES = ['\uD800', '\uDBFF', '\uDC00', '\uDFFF', '\uDE00\uD83D'];
+/** Other BMP marks seen next to numbers: zero-width joiner, variation selector 16, rupee sign. */
+const MARKS = ['\u200D', '\uFE0F', '\u20B9'];
+const FI_LIGATURE = '\uFB01';
+const DOTLESS_I = '\u0131';
+const LONG_S = '\u017F';
+const SHARP_S = '\u00DF';
 const caseFold = (t: string) => t.toLowerCase()
-  .replace(/i/g, () => (chance(0.5) ? '\u0131' : 'i'))
-  .replace(/s/g, () => (chance(0.5) ? '\u017F' : 's'))
-  .replace(/fi/g, () => (chance(0.5) ? '\uFB01' : 'fi'))
+  .replace(/fi/g, () => (chance(0.5) ? FI_LIGATURE : 'fi'))
+  .replace(/i/g, () => (chance(0.5) ? DOTLESS_I : 'i'))
+  .replace(/s/g, () => (chance(0.5) ? LONG_S : 's'))
   .replace(/n/g, () => (chance(0.1) ? '\u0149' : 'n'));
 const DIGIT_BASES = [0xff10, 0x0966, 0x0660, 0x06f0];
 const foreignDigits = (t: string) => t.replace(/\d/g, (d) => {
@@ -193,9 +205,31 @@ for (const w of [[['AAPFU0939F', -1, 95]], [['Account', -1, 95], ['5010023456789
   [['Mob', 0, 95], ['98450', -1, 95], ['12345', 0, 95]], [['ABCDE12', -3, 10], ['Ref1234', -1, 10]]] as Array<Array<[string, number, number]>>) edge('negative_line', place(w));
 for (let k = 0; k < 35; k++) edge('negative_line', place(linesOf(1 + int(3), (t) => t).map(([t, li, c]) => [t, chance(0.4) ? -1 - int(3) : li, c])));
 // Surrogate pairs, emoji, lone surrogates, joiners next to and inside numbers.
-for (let k = 0; k < 40; k++) edge('surrogates_emoji', place(linesOf(1 + int(3), (t) => (chance(0.5) ? insertAt(t, pick(EMOJI)) : t))));
+// Every case carries one named astral character (in turn) in its first token, more at random elsewhere.
+for (let k = 0; k < 40; k++) {
+  const w = linesOf(1 + int(3), (t) => (chance(0.4) ? insertAt(t, pick([...ASTRAL, ...MARKS])) : t));
+  w[0][0] = insertAt(w[0][0], ASTRAL[k % ASTRAL.length]);
+  edge('surrogates_emoji', place(w));
+}
+// Lone and reversed surrogate code units inside and next to numbers.
+for (let k = 0; k < 20; k++) {
+  const w = linesOf(1 + int(3), (t) => (chance(0.4) ? insertAt(t, pick(LONE_SURROGATES)) : t));
+  w[0][0] = insertAt(w[0][0], LONE_SURROGATES[k % LONE_SURROGATES.length]);
+  edge('lone_surrogates', place(w));
+}
 // Upper-casing that maps into ASCII or changes length (dotless i, long s, fi ligature, sharp s, n preceded by apostrophe).
-for (let k = 0; k < 40; k++) edge('case_mapping', place(linesOf(1 + int(3), (t) => (chance(0.6) ? caseFold(t) : chance(0.3) ? '\u00DF' + t : t))));
+// The fi ligature is also injected directly: as a prefix, inside a token, or replacing one character.
+const ligature = (t: string) => pick([() => FI_LIGATURE + t, () => insertAt(t, FI_LIGATURE), () => { const i = int(t.length); return t.slice(0, i) + FI_LIGATURE + t.slice(i + 1); }])();
+const CASE_STEPS = [caseFold, (t: string) => SHARP_S + t, ligature, (t: string) => t];
+const NAMED_CASE_STEPS = [ligature, (t: string) => insertAt(t, DOTLESS_I), (t: string) => insertAt(t, LONG_S), (t: string) => SHARP_S + t];
+for (let k = 0; k < 48; k++) {
+  const w = linesOf(1 + int(3), (t) => pick(CASE_STEPS)(t));
+  // Each case carries at least one named character, in turn: fi ligature, dotless i, long s, sharp s.
+  w[0][0] = NAMED_CASE_STEPS[k % 4](w[0][0]);
+  // Labels spelled with the same characters (they upper-case to MOBILE:, ACCOUNT and FIPAN).
+  if (k % 3 === 0) w.unshift(['M' + DOTLESS_I + 'ob' + DOTLESS_I + 'le:', 0, 95], ['Acc' + LONG_S + 'ount', 0, 95], [FI_LIGATURE + 'PAN', 0, 95]);
+  edge('case_mapping', place(w));
+}
 // Full-width, Devanagari, Arabic-Indic, Persian and mathematical (non-BMP) digits.
 for (let k = 0; k < 40; k++) edge('foreign_digits', place(linesOf(1 + int(3), foreignDigits)));
 // Confidence 0, -0, above 100, NaN, infinities, and the 0.6 * 100 = 60.00000000000001 boundary; enough words for ocrAdequate.
@@ -219,7 +253,8 @@ const NUMERIC_STRINGS = ['\u20B91,770.00', '1770/-', '\u20B91,770/-', 'Rs. 12', 
   '12/-/-', '12/- ', ' 12/-', '1e400', '00012', '0.1e1', '1.2.3', 'abc', '12abc', '\uFEFF7\u3000', '7\u001C', '1\u20082', 'R s 5', 'Rs.Rs.9',
   '\u20B9\u20B9', '/-', '9/-x', '0', '-0', '29', '14', 'many', '1e21', '123456789012345678901234567890'];
 const TEXT_STRINGS = ['Ravi Traders', ' 29aagcb7383j1z4 ', '29AAG CB7383J1Z4', '29AAG\u00A0CB7383\u2009J1Z4\uFEFF', '4521', '2026-11-02', '29-Karnataka',
-  '', '\u001CRavi\u001F', '\uFEFF Ravi\u3000', 'stra\u00DFe', 'a,}', 'x\ny', '\u00E9', 'Rice', '1006'];
+  '', '\u001CRavi\u001F', '\uFEFF Ravi\u3000', 'stra\u00DFe', 'a,}', 'x\ny', '\u00E9', 'Rice', '1006',
+  'Ravi ' + EMOJI_GRINNING, FLAG_INDIA + ' Traders', '29' + MATH_BOLD_ONE + '-Karnataka'];
 const NUMBERS = [0, -0, 1, 1770, 1770.8, 0.9, 1.5, -3, 7, 1e21, 1e-7, 123e-20, 0.1, 2.5, 14, 1e300, 4521, 29, 100, 135, 0.30000000000000004, 5e-324, 1.7976931348623157e308];
 
 function randomValue(depth = 0): unknown {
@@ -261,7 +296,7 @@ function randomObject(): Record<string, unknown> {
   return o;
 }
 
-const randomParseCases = Array.from({ length: 1300 }, () => parseCase(mutate(JSON.stringify(randomObject()))));
+const randomParseCases = Array.from({ length: 1200 }, () => parseCase(mutate(JSON.stringify(randomObject()))));
 
 // ---- parser edge section
 
@@ -297,19 +332,30 @@ const toJ = (v: unknown): J => {
   if (v !== null && typeof v === 'object') return { entries: Object.entries(v).map(([k, x]) => [k, toJ(x)]) };
   return v as J;
 };
-const LONE = ['\uD800', '\uDBFF', '\uDC00', '\uDFFF', '\uDE00\uD83D', '\u1F600'];
-const FOREIGN_NUMERIC = ['\uFF11\uFF17\uFF17\uFF10', '\u0967\u096D\u096D\u0966', '\u0661\u0667', '\u1D7CF\u1D7D0', '17\u1F60070', '\u20B9\uFF11,770', '1770\u200D', '\uFF10x10'];
+const FOREIGN_NUMERIC = ['\uFF11\uFF17\uFF17\uFF10', '\u0967\u096D\u096D\u0966', '\u0661\u0667', MATH_BOLD_ONE + '\u{1D7D0}', '17' + EMOJI_GRINNING + '70',
+  '\u20B9\uFF11,770', '1770\u200D', '\uFF10x10'];
 
 const edgeParse: Array<ReturnType<typeof parseCase>> = [];
 const pEdge = (cat: string, raw: string) => edgeParse.push({ cat, ...parseCase(raw) });
-// Backslash-u escapes everywhere, keys included ("total" is the key total).
+// Backslash-u escapes everywhere, keys included (the escape of "t" followed by "otal" is the key total).
 for (let k = 0; k < 120; k++) pEdge('unicode_escapes', enc(toJ(randomObject()), pick([0.05, 0.3, 1])));
 // Lone and reversed surrogates, raw and escaped, in text, GSTIN, numeric strings and keys.
 for (let k = 0; k < 50; k++) {
   const o = toJ(randomObject()) as { entries: Array<[string, J]> };
-  for (const f of ['supplierName', 'supplierGstin', 'invoiceNo', 'total', 'cgst']) if (chance(0.5)) o.entries.push([f, insertAt(pick(['29aagcb7383j1z4', '1770', 'Ravi', '']), pick(LONE))]);
-  if (chance(0.3)) o.entries.push([pick(LONE) + 'total', 5]);
+  o.entries.push([pick(['supplierName', 'supplierGstin', 'total']), insertAt('29aagcb7383j1z4', LONE_SURROGATES[k % LONE_SURROGATES.length])]);
+  for (const f of ['supplierName', 'supplierGstin', 'invoiceNo', 'total', 'cgst']) if (chance(0.5)) o.entries.push([f, insertAt(pick(['29aagcb7383j1z4', '1770', 'Ravi', '']), pick(LONE_SURROGATES))]);
+  if (chance(0.3)) o.entries.push([pick(LONE_SURROGATES) + 'total', 5]);
   pEdge('lone_surrogates', enc(o, pick([0, 0, 0.3])));
+}
+// Astral characters (valid surrogate pairs): each object is written twice, once with the character raw inside the JSON
+// strings and once with every code unit escaped (the pair becomes two six-character escapes).
+for (let k = 0; k < 30; k++) {
+  const ch = ASTRAL[k % ASTRAL.length];
+  const o = toJ(randomObject()) as { entries: Array<[string, J]> };
+  for (const f of ['supplierName', 'supplierGstin', 'invoiceNo', 'total', 'itemCount', 'placeOfSupply']) if (chance(0.5) || f === 'supplierName') o.entries.push([f, insertAt(pick(['29aagcb7383j1z4', '1770', 'Ravi', '29-Karnataka']), ch)]);
+  o.entries.push(['items', [{ entries: [['description', 'Rice' + ch], ['amount', '1' + ch + '0']] }]]);
+  pEdge('astral_raw', enc(o, 0));
+  pEdge('astral_escaped', enc(o, 1));
 }
 // Duplicate keys with different types; JSON.parse keeps the last.
 for (let k = 0; k < 60; k++) {
@@ -402,6 +448,38 @@ const checksCases = Array.from({ length: 1200 }, () => {
   };
 });
 
+// ---- presence checks: each named code point must really occur in its category (a mis-escaped constant fails here)
+
+const cp = (c: number) => String.fromCodePoint(c);
+const caseTexts = (cases: Array<{ cat?: string; words?: unknown[][]; raw?: string }>, cat: string) =>
+  cases.filter((c) => c.cat === cat).map((c) => (c.raw !== undefined ? c.raw : (c.words ?? []).map((w) => w[0]).join(' ')));
+/** The JSON-escaped form of `s`: every code unit as backslash, u, four hex digits (either case). */
+const escapedForm = (s: string) => new RegExp([...s].flatMap((ch) => Array.from({ length: ch.length }, (_, i) => ch.charCodeAt(i)))
+  .map((u) => '\\\\u' + u.toString(16).padStart(4, '0')).join(''), 'i');
+const presence: string[] = [];
+const requirePresence = (cases: unknown[], cat: string, label: string, test: (t: string) => boolean, min: number) => {
+  const n = caseTexts(cases as never, cat).filter(test).length;
+  if (n < min) throw new Error(`presence check: ${label} occurs in ${n} ${cat} cases, need at least ${min}`);
+  presence.push(`${cat} ${label}: ${n}`);
+};
+const NAMED_ASTRAL: Array<[string, string]> = [['U+1F600', cp(0x1f600)], ['U+1F1EE U+1F1F3', cp(0x1f1ee) + cp(0x1f1f3)], ['U+1D7CF', cp(0x1d7cf)]];
+for (const [label, s] of NAMED_ASTRAL) {
+  requirePresence(edgeShield, 'surrogates_emoji', label, (t) => t.includes(s), 10);
+  requirePresence(edgeParse, 'astral_raw', label + ' raw', (t) => t.includes(s), 8);
+  requirePresence(edgeParse, 'astral_escaped', label + ' escaped pair', (t) => escapedForm(s).test(t), 8);
+}
+for (const [label, c] of [['U+FB01', 0xfb01], ['U+0131', 0x131], ['U+017F', 0x17f], ['U+00DF', 0xdf]] as Array<[string, number]>) {
+  requirePresence(edgeShield, 'case_mapping', label, (t) => t.includes(cp(c)), 10);
+}
+const hasLoneUnit = (t: string) => [...t].some((ch) => ch.length === 1 && ch.charCodeAt(0) >= 0xd800 && ch.charCodeAt(0) <= 0xdfff);
+// Astral pairs also reach the escape and foreign-digit categories (escaped in the first, raw or escaped in the second).
+const anyAstralEscaped = (t: string) => NAMED_ASTRAL.some(([, a]) => escapedForm(a).test(t));
+const anyAstralRaw = (t: string) => NAMED_ASTRAL.some(([, a]) => t.includes(a));
+requirePresence(edgeParse, 'unicode_escapes', 'an escaped astral pair', anyAstralEscaped, 10);
+requirePresence(edgeParse, 'foreign_digits', 'an astral pair', (t) => anyAstralRaw(t) || anyAstralEscaped(t), 10);
+requirePresence(edgeShield, 'lone_surrogates', 'lone surrogate', hasLoneUnit, 15);
+requirePresence(edgeParse, 'lone_surrogates', 'lone surrogate (raw or escaped)', (t) => hasLoneUnit(t) || /\\u[dD][89a-fA-F][0-9a-fA-F]{2}/.test(t), 40);
+
 mkdirSync(OUT, { recursive: true });
 // Every non-ASCII character is written as a \u escape so the files stay plain ASCII.
 const ascii = (s: string) => s.replace(/[\u007f-\uFFFF]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
@@ -442,3 +520,4 @@ console.log(`shield ${shieldCases.length} (edge ${edgeShield.length}), parse ${p
 console.log(`shield: with matches ${shieldCases.filter((c) => c.matches.length).length}, uncertain ${shieldCases.filter((c) => c.uncertain).length}`);
 console.log(`shield edges ${counts(edgeShield)}`);
 console.log(`parse edges ${counts(edgeParse)}`);
+console.log(`presence ${presence.join('; ')}`);

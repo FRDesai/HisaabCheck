@@ -102,11 +102,16 @@ private fun BillRoot(shop: Shop, onSignOut: () -> Unit) {
     val vm: BillViewModel = viewModel(key = "bill-${shop.id}", factory = BillViewModel.Factory(shop, application))
     val screen by vm.screen.collectAsState()
 
-    // Whenever the session leaves Ready (sign-out or otherwise) the bill stops and the photo is dropped.
-    // A rotation also leaves composition, but the activity is only being recreated: keep the running bill then.
+    // Entering starts "Recent bills" (a no-op if it is already running, as after a rotation).
+    // Whenever the session leaves Ready (sign-out or otherwise) the bill stops, the photo is dropped and the listener is
+    // removed. A rotation also leaves composition, but the activity is only being recreated: keep the running bill then.
     DisposableEffect(vm) {
+        vm.startRecent()
         onDispose {
-            if ((context as? Activity)?.isChangingConfigurations != true) vm.done()
+            if ((context as? Activity)?.isChangingConfigurations != true) {
+                vm.done()
+                vm.stopRecent()
+            }
         }
     }
 

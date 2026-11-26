@@ -151,15 +151,41 @@ class BillViewModel(private val shop: Shop, app: Application) : AndroidViewModel
     private var consent: CompletableDeferred<ConsentResult>? = null
     private var runId = 0
     private var recentListener: ListenerRegistration? = null
+    /** Bumped on every start and stop, so callbacks of an earlier listener are ignored. */
+    private var recentGen = 0
 
     init {
-        try {
-            recentListener = store.watchRecent(shop.id, 20, onChange = { _recent.value = it }, onError = { })
-        } catch (e: Exception) {
-            // Firebase not ready: the list stays empty.
-        }
         refreshAvailability()
         sweepCaptures()
+    }
+
+    /** Starts the "Recent bills" listener unless it is running. Idempotent; call on the main thread. */
+    fun startRecent() {
+        if (recentListener != null) return
+        val gen = ++recentGen
+        try {
+            recentListener = store.watchRecent(
+                shop.id, 20,
+                onChange = { if (gen == recentGen) _recent.value = it },
+                // An error ends the listener (for example after sign-out); mark it stopped so it can be started again.
+                onError = {
+                    if (gen == recentGen) {
+                        recentListener?.remove()
+                        recentListener = null
+                    }
+                },
+            )
+        } catch (e: Exception) {
+            // Firebase not ready: the list stays empty and the listener is not running.
+        }
+    }
+
+    /** Removes the "Recent bills" listener, if any, and clears the list. Idempotent; call on the main thread. */
+    fun stopRecent() {
+        recentGen++
+        recentListener?.remove()
+        recentListener = null
+        _recent.value = emptyList()
     }
 
     /** True when the photo that failed is in memory, so a retry re-runs that same photo. */
@@ -211,12 +237,16 @@ class BillViewModel(private val shop: Shop, app: Application) : AndroidViewModel
         }
     }
 
-    /** Deletes every file in the captures folder, unless a capture is being loaded right now. */
+    /**
+     * Deletes stale files (older than [STALE_CAPTURE_MS]) in the captures folder, unless a capture is being loaded right
+     * now. A fresh file may be a capture still to be delivered, for example after the app was killed behind the camera.
+     */
     private fun sweepCaptures() {
         viewModelScope.launch(Dispatchers.IO) {
             if (!captureLock.tryLock()) return@launch
             try {
-                capturesDir().listFiles()?.forEach { it.delete() }
+                val cutoff = System.currentTimeMillis() - STALE_CAPTURE_MS
+                capturesDir().listFiles()?.forEach { if (it.lastModified() < cutoff) it.delete() }
             } finally {
                 captureLock.unlock()
             }
@@ -500,6 +530,7 @@ class BillViewModel(private val shop: Shop, app: Application) : AndroidViewModel
         consent?.cancel()
         consent = null
         photo = null
+        recentGen++
         recentListener?.remove()
         recentListener = null
     }
@@ -510,6 +541,7 @@ class BillViewModel(private val shop: Shop, app: Application) : AndroidViewModel
     }
 
     private companion object {
+        const val STALE_CAPTURE_MS = 10 * 60 * 1000L
         const val CONNECTION_MESSAGE = "Could not save your changes. Check your connection and try again."
         const val NOT_SAVED_MESSAGE = "Not saved - the server refused this bill."
         const val REVIEWED_MESSAGE = "Your CA has already reviewed this bill, so it can no longer be changed here."

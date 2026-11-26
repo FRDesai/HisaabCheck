@@ -3,6 +3,10 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
 import { countToReview, createInvite, createShop, watchShops, type Shop } from '../../adapters/store';
 import { isValidGstin } from '../../core/shield/gstin';
+import { retryWithDelays } from '../../core/session/retry';
+
+/** A new shop's count can reach the server before the shop document does and be refused; ask again twice, then give up. */
+const COUNT_RETRY_DELAYS_MS = [1500, 5000] as const;
 
 export default function ShopsPage() {
   const { user } = useAuth();
@@ -12,12 +16,10 @@ export default function ShopsPage() {
   const [toReview, setToReview] = useState<Record<string, number>>({});
   const shopIds = shops.map((s) => s.id).join(',');
   useEffect(() => {
-    let alive = true;
-    for (const id of shopIds ? shopIds.split(',') : []) {
-      // A failed count (offline, rules) just shows no number.
-      countToReview(id).then((n) => { if (alive) setToReview((t) => ({ ...t, [id]: n })); }).catch(() => {});
-    }
-    return () => { alive = false; };
+    // A count that keeps failing (offline, rules) just shows no number.
+    const cancels = (shopIds ? shopIds.split(',') : []).map((id) =>
+      retryWithDelays(() => countToReview(id), COUNT_RETRY_DELAYS_MS, (n) => setToReview((t) => ({ ...t, [id]: n }))));
+    return () => { for (const cancel of cancels) cancel(); };
   }, [shopIds]);
   const [inviteError, setInviteError] = useState<Record<string, string>>({});
   const [inviteBusy, setInviteBusy] = useState<Record<string, boolean>>({});

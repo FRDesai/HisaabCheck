@@ -91,7 +91,7 @@ Defaults are in `web/src/core/config/defaults.ts` and `firebase/remoteconfig.tem
 | `consent_ocr_threshold` | `0.6` | OCR word confidence (as a fraction of 100) below which a number-like word makes the shield "unsure". |
 | `total_tolerance_inr` | `1` | Allowed difference in rupees for the total check. |
 | `max_device_line_items` | `10` | Limit on line items asked for in the on-device prompt. |
-| `cloud_model` | `gemini-3.1-flash-lite` | Cloud model name. |
+| `cloud_model` | `gemini-3.5-flash-lite` | Cloud model name. |
 | `extraction_prompt_version` | `v1` | Recorded on each bill and route log. |
 | `mask_pii` | `true` | Redact private numbers before any cloud call. In production builds this is always on, whatever Remote Config says. It can be turned off only in development builds. |
 

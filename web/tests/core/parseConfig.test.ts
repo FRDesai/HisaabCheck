@@ -5,7 +5,7 @@ describe('parseConfig', () => {
   it('uses bundled defaults for an empty map', () => {
     expect(parseConfig({}, false)).toEqual({
       routingMode: 'smart', confidenceThreshold: 0.8, consentOcrThreshold: 0.6,
-      totalToleranceInr: 1, maxDeviceLineItems: 10, cloudModel: 'gemini-3.1-flash-lite',
+      totalToleranceInr: 1, maxDeviceLineItems: 10, cloudModel: 'gemini-3.5-flash-lite',
       extractionPromptVersion: 'v1', maskPii: true,
     });
   });

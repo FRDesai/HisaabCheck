@@ -1,7 +1,7 @@
 import type { PathTaken, PiiType, ProcessedBill, Reason } from '../types';
 
 export interface RouteLogDoc {
-  billId: string; shopId: string; caUid: string; platform: 'web'; path: PathTaken; reason: Reason;
+  billId: string; shopId: string; caUid: string; platform: 'web' | 'android'; path: PathTaken; reason: Reason;
   piiMasked: number; piiTypes: PiiType[]; latencyMs: number; estCostUsd: number; modelName: string; promptVersion: string; createdAt: Date;
 }
 export const ROUTE_LOG_KEYS = ['billId', 'shopId', 'caUid', 'platform', 'path', 'reason', 'piiMasked', 'piiTypes',

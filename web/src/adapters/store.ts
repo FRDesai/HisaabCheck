@@ -1,14 +1,15 @@
 import type { User } from 'firebase/auth';
-import { addDoc, collection, deleteField, doc, getCountFromServer, getDoc, getDocsFromServer, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where, limit } from 'firebase/firestore';
+import { addDoc, collection, deleteField, doc, getCountFromServer, getDoc, getDocsFromServer, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where, limit, writeBatch } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { db, storage } from '../firebase';
 import type { Checks, Extraction, ProcessedBill } from '../core/types';
 import { toRouteLog, type RouteLogDoc } from '../core/router/routeLog';
+import { inviteCode } from '../core/invite/code';
 import { toBillDoc, type BillDoc } from '../core/review/billDoc';
 
 export const CONSENT_VERSION = '2026-11-v1';
 export type UserDoc = { role: 'ca' | 'admin'; name: string; email: string; consentVersion?: string };
-export type Shop = { id: string; caUid: string; shopName: string; gstin: string; state: string; storeImages: boolean };
+export type Shop = { id: string; caUid: string; shopName: string; gstin: string; state: string; storeImages: boolean; inviteCode?: string; ownerUid?: string };
 
 export async function ensureUser(u: User): Promise<UserDoc> {
   const r = doc(db, 'users', u.uid);
@@ -40,6 +41,17 @@ export function watchShops(caUid: string, cb: (s: Shop[]) => void) {
 }
 export async function createShop(caUid: string, s: Omit<Shop, 'id' | 'caUid'>) {
   return (await addDoc(collection(db, 'shops'), { ...s, caUid, createdAt: serverTimestamp() })).id;
+}
+
+/** A new invite code for the shop's owner: the invite document and the shop's code are written together. */
+export async function createInvite(shop: Shop, caUid: string): Promise<string> {
+  let code: string | null = null;
+  while (code === null) code = inviteCode(crypto.getRandomValues(new Uint8Array(16)));
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'invites', code), { shopId: shop.id, caUid, createdAt: serverTimestamp() });
+  batch.update(doc(db, 'shops', shop.id), { inviteCode: code });
+  await batch.commit();
+  return code;
 }
 
 export type SavedBill = { billId: string; synced: Promise<void>; photo: Promise<'stored' | 'skipped' | 'failed'> };

@@ -16,6 +16,8 @@ import com.hisaabcheck.core.Availability
 import com.hisaabcheck.core.DeviceModel
 import com.hisaabcheck.core.ImageInput
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.collect
 
 /**
@@ -46,20 +48,23 @@ class FirebaseAiDevice : DeviceModel {
 
     override suspend fun download(onProgress: (Double) -> Unit) {
         var total = 0L
+        var completed = false
         FirebaseAIOnDevice.download().collect { status ->
             when (status) {
                 is DownloadStatus.DownloadStarted -> { total = status.bytesToDownload; onProgress(0.0) }
                 is DownloadStatus.DownloadInProgress ->
                     onProgress(if (total > 0) (status.totalBytesDownloaded.toDouble() / total).coerceIn(0.0, 1.0) else 0.0)
-                is DownloadStatus.DownloadCompleted -> onProgress(1.0)
+                is DownloadStatus.DownloadCompleted -> { completed = true; onProgress(1.0) }
                 is DownloadStatus.DownloadFailed -> error("on-device model download failed")
                 else -> Unit
             }
         }
+        if (!completed) error("on-device model download ended without completing")
     }
 
     override suspend fun extract(image: ImageInput, prompt: String): String {
-        val bitmap = BitmapFactory.decodeByteArray(image.bytes, 0, image.bytes.size) ?: error("cannot decode image")
+        val bitmap = withContext(Dispatchers.Default) { BitmapFactory.decodeByteArray(image.bytes, 0, image.bytes.size) }
+            ?: error("cannot decode image")
         val res = model.generateContent(content { image(bitmap); text(prompt) })
         // Fail closed: ONLY_ON_DEVICE already keeps the request on the phone; this refuses any answer not confirmed as the device's.
         if (res.inferenceSource != InferenceSource.ON_DEVICE) error("on-device model unavailable: response not from device")

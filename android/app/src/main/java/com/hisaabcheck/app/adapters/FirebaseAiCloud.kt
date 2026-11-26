@@ -1,6 +1,5 @@
 package com.hisaabcheck.app.adapters
 
-import android.graphics.BitmapFactory
 import com.google.firebase.Firebase
 import com.google.firebase.ai.InferenceMode
 import com.google.firebase.ai.OnDeviceConfig
@@ -30,8 +29,8 @@ class FirebaseAiCloud : CloudModel {
                 )
             }
         }
-        val bitmap = BitmapFactory.decodeByteArray(redacted.bytes, 0, redacted.bytes.size) ?: error("cannot decode image")
-        val res = g.generateContent(content { image(bitmap); text(prompt) })
+        // The painted JPEG bytes go out untouched as inline data: no decode, no re-encode.
+        val res = g.generateContent(content { inlineData(redacted.bytes, "image/jpeg"); text(prompt) })
         return res.text?.takeIf { it.isNotBlank() } ?: error("empty cloud answer")
     }
 }

@@ -44,7 +44,7 @@ class BillStore {
         val billRef: DocumentReference = if (billId != null) bills.document(billId) else bills.document()
 
         val doc = HashMap<String, Any?>()
-        bill.extraction?.let { doc.putAll(extractionFields(it, withItems = true)) }
+        bill.extraction?.let { doc.putAll(extractionFields(it)) }
         doc["checks"] = bill.checks?.let { checksMap(it) }
         doc["status"] = bill.status.wire
         doc["route"] = mapOf(
@@ -79,7 +79,16 @@ class BillStore {
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    PhotoResult.FAILED
+                    // A retry may find the photo already stored by an earlier attempt (uploads are never overwritten).
+                    try {
+                        storage.reference.child(imagePath).metadata.awaitTask()
+                        billRef.update("imagePath", imagePath).awaitTask()
+                        PhotoResult.STORED
+                    } catch (e2: CancellationException) {
+                        throw e2
+                    } catch (e2: Exception) {
+                        PhotoResult.FAILED
+                    }
                 }
             }
         } else CompletableDeferred(PhotoResult.SKIPPED)
@@ -87,8 +96,13 @@ class BillStore {
         return SavedBill(billRef.id, synced, photo)
     }
 
+    /**
+     * Writes the whole extraction (as save does), checks and editedAt; never status, route, createdAt or review keys.
+     * Completes on server acknowledgement and throws on refusal. Offline it does not return until the connection is
+     * back, so callers must not block navigation on it.
+     */
     suspend fun updateFields(shopId: String, billId: String, e: Extraction, checks: Checks) {
-        val fields = HashMap<String, Any?>(extractionFields(e, withItems = false))
+        val fields = HashMap<String, Any?>(extractionFields(e))
         fields["checks"] = checksMap(checks)
         fields["editedAt"] = FieldValue.serverTimestamp()
         db.collection("shops").document(shopId).collection("bills").document(billId).update(fields).awaitTask()
@@ -114,8 +128,8 @@ class BillStore {
         "total" to c.total, "gstin" to c.gstin, "taxSplit" to c.taxSplit, "date" to c.date, "required" to c.required,
     )
 
-    /** Field names as the web writes them. With [withItems] false only the ten editable fields are included. */
-    private fun extractionFields(e: Extraction, withItems: Boolean): Map<String, Any> {
+    /** The flattened extraction exactly as the web writes it; items and itemCount are omitted when null. */
+    private fun extractionFields(e: Extraction): Map<String, Any> {
         val m = LinkedHashMap<String, Any>()
         m["supplierName"] = e.supplierName
         m["supplierGstin"] = e.supplierGstin
@@ -127,15 +141,13 @@ class BillStore {
         m["sgst"] = e.sgst
         m["igst"] = e.igst
         m["total"] = e.total
-        if (withItems) {
-            m["confidence"] = e.confidence
-            e.items?.let { items ->
-                m["items"] = items.map {
-                    mapOf("description" to it.description, "hsn" to it.hsn, "qty" to it.qty, "rate" to it.rate, "amount" to it.amount)
-                }
+        m["confidence"] = e.confidence
+        e.items?.let { items ->
+            m["items"] = items.map {
+                mapOf("description" to it.description, "hsn" to it.hsn, "qty" to it.qty, "rate" to it.rate, "amount" to it.amount)
             }
-            e.itemCount?.let { m["itemCount"] = it }
         }
+        e.itemCount?.let { m["itemCount"] = it }
         return m
     }
 }

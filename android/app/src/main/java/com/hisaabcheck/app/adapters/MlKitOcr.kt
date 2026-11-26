@@ -11,14 +11,17 @@ import com.hisaabcheck.core.Ocr
 import com.hisaabcheck.core.OcrWord
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 
 /** On-device text recognition. Words are returned in reading order with boxes in image pixels. Text is never logged. */
 class MlKitOcr : Ocr {
     private val recognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
 
     override suspend fun recognize(image: ImageInput): List<OcrWord> {
-        val bitmap = BitmapFactory.decodeByteArray(image.bytes, 0, image.bytes.size) ?: error("cannot decode image")
+        val bitmap = withContext(Dispatchers.Default) { BitmapFactory.decodeByteArray(image.bytes, 0, image.bytes.size) }
+            ?: error("cannot decode image")
         val result = recognizer.process(InputImage.fromBitmap(bitmap, 0)).awaitTask()
         val words = ArrayList<OcrWord>()
         var line = 0

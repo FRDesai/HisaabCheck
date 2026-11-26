@@ -244,6 +244,58 @@ for (let k = 0; k < 40; k++) {
   edge('empty_words', place(w));
 }
 
+// Long digit runs: bank accounts behind OCR look-alikes of A/C, with no label, grouped, and the non-private long runs
+// around them (amounts, times, GSTINs). Its own seeded generator, so the other corpora keep their bytes.
+const lr = mulberry32(20261127);
+const lrInt = (n: number) => Math.floor(lr() * n);
+const lrPick = <T>(a: readonly T[]): T => a[lrInt(a.length)];
+const lrDigits = (n: number) => Array.from({ length: n }, () => DIG[lrInt(10)]).join('');
+const LOOKALIKE_LABELS = ['AJC No:', 'AJC', 'A1C No:', 'AIC No', 'AlC No:', 'A|C', 'A\\C No:', 'A!C', 'A7C No', 'A/C', 'A/c No',
+  'Acct', 'Account No', 'Acc. Number', 'ACC#', 'Bank A/c', 'SB A/c', 'Current A/c', 'CA No', 'AC', 'AC No', 'HbA1c', 'ALCOHOL'];
+const LR_FILLER = ['Beneficiary', 'Ref', 'Total', 'Rs.', 'Qty', 'Kg', 'HSN', '1006', '10063010', 'Date:', '02-11-2026', '10:30', 'Invoice', 'No:',
+  '452156', 'E-Way', 'Bill', 'Ack', 'IRN', '560001', '22AAAAA0000A1Z5', '27AAPFU0939F1ZV', '1,23,45,678.00', '240', '12'];
+const LR_SEP = ['', '', ' ', ' ', ' ', '-', '\u00A0', '\u2007', '\u0085', '.', ',', ':'];
+/** n digits cut into groups of random sizes (1 to 6, or 4 like a printed account), joined by a random separator each. */
+const lrGrouped = (n: number) => {
+  const d = lrDigits(n);
+  const fours = lr() < 0.4;
+  let out = ''; let i = 0;
+  while (i < d.length) {
+    const g = fours ? 4 : 1 + lrInt(6);
+    out += (i === 0 ? '' : lrPick(LR_SEP)) + d.slice(i, i + g);
+    i += g;
+  }
+  return out;
+};
+const lrRun = () => {
+  const n = lrPick([7, 8, 9, 9, 10, 11, 12, 12, 13, 14, 14, 15, 16, 17, 18, 18, 19, 20, 24]);
+  return lrPick([() => lrDigits(n), () => lrDigits(n), () => lrGrouped(n),
+    () => lrDigits(n) + lrPick(['.00', '.5', ',78', ':30']), () => lrPick(['.', ',', ':', '7.', '9,']) + lrDigits(n),
+    () => lrPick(['AJC', 'AC', 'INV', 'X']) + lrDigits(n), () => lrDigits(n) + lrPick(['A', 'Z'])])();
+};
+const lrLine = (li: number, k: number): Array<[string, number, number]> => {
+  const toks: string[] = [];
+  for (let j = 0, n = lrInt(3); j < n; j++) toks.push(lrPick(LR_FILLER));
+  if (k % 3 !== 2) toks.push(lrPick(LOOKALIKE_LABELS)); // a third of the cases have no label at all
+  toks.push(lrRun());
+  for (let j = 0, n = lrInt(3); j < n; j++) toks.push(lrPick([...LR_FILLER, lrRun()]));
+  return toks.join(' ').split(' ').filter(Boolean).map((t) => [t, li, lrPick([95, 92, 93, 70, 40])] as [string, number, number]);
+};
+for (let k = 0; k < 240; k++) {
+  const w = lrLine(0, k);
+  // Sometimes the label sits alone on the line before (label-on-previous-line path), or a second line follows.
+  if (k % 5 === 0) w.forEach((e) => { e[1] = 1; });
+  if (k % 5 === 0) w.unshift([lrPick(LOOKALIKE_LABELS), 0, 95]);
+  else if (k % 5 === 1) w.push(...lrLine(1, k + 1));
+  edge('long_digit_runs', place(w.flatMap(([t, li, c]) => t.split(' ').map((x) => [x, li, c] as [string, number, number]))));
+}
+// The exact reading from the first real run (AJC 92, No: 93, the account 92) and its fixed boundaries.
+edge('long_digit_runs', place([['AJC', 0, 92], ['No:', 0, 93], ['50100234567891', 0, 92]]));
+for (const line of ['Beneficiary 5010 0234 5678 91', 'Ref 123456789', 'Ref 123456789012345678', 'Ref 12345678', 'Ref 1234567890123456789',
+  'Total 50100234567.00', 'Invoice No: 452156', 'GSTIN 27AAPFU0939F1ZV 50100234567891', 'Beneficiary 50100 2 34567891', 'Rice 1006 2 120 240']) {
+  edge('long_digit_runs', place(line.split(' ').map((t) => [t, 0, 95] as [string, number, number])));
+}
+
 const shieldCases = [...edgeShield, ...randomShieldCases];
 
 // ---------------------------------------------------------------- parseExtraction
@@ -479,6 +531,28 @@ requirePresence(edgeParse, 'unicode_escapes', 'an escaped astral pair', anyAstra
 requirePresence(edgeParse, 'foreign_digits', 'an astral pair', (t) => anyAstralRaw(t) || anyAstralEscaped(t), 10);
 requirePresence(edgeShield, 'lone_surrogates', 'lone surrogate', hasLoneUnit, 15);
 requirePresence(edgeParse, 'lone_surrogates', 'lone surrogate (raw or escaped)', (t) => hasLoneUnit(t) || /\\u[dD][89a-fA-F][0-9a-fA-F]{2}/.test(t), 40);
+
+// Long digit runs: every family is really present, and the cases exercise both outcomes of the new rule.
+const LR_TEXT: Array<[string, (t: string) => boolean]> = [
+  ['an OCR look-alike of A/C', (t) => /(?:^| )A[|\\1IJl!7]C(?: |$)/.test(t)],
+  ['the exact AJC reading', (t) => /(?:^| )AJC /.test(t)],
+  ['an unlabelled contiguous run of 9 to 18 digits', (t) => /(?<![\d.,:A-Za-z/|\\!#])\d{9,18}(?!\d)/.test(t) && !/A.C|AC|ACC|ACCOUNT/i.test(t)],
+  ['a grouped run of 9 or more digits', (t) => /\d{3,}[ \u00A0\u2007-]\d{3,}[ \u00A0\u2007-]\d{2,}/.test(t)],
+  ['a long run with a decimal part', (t) => /\d{9,}[.,]\d/.test(t)],
+  ['a GSTIN next to a long run', (t) => /\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z] \d{9,}/.test(t)],
+];
+for (const [label, test] of LR_TEXT) requirePresence(edgeShield, 'long_digit_runs', label, test, 5);
+const lrCases = edgeShield.filter((c) => c.cat === 'long_digit_runs');
+const lrOutcomes: Array<[string, number]> = [
+  ['a bank account found after a look-alike label', lrCases.filter((c) => c.matches.some((m) => m.type === 'BANK_ACCOUNT')).length],
+  ['a long run hidden as a possible id', lrCases.filter((c) => c.matches.some((m) => m.type === 'POSSIBLE_ID')).length],
+  ['a long_digit_run reason', lrCases.filter((c) => c.uncertainReasons.some((r) => r.startsWith('long_digit_run:'))).length],
+  ['nothing hidden and certain', lrCases.filter((c) => c.matches.length === 0 && !c.uncertain).length],
+];
+for (const [label, n] of lrOutcomes) {
+  if (n < 10) throw new Error(`presence check: ${label} occurs in ${n} long_digit_runs cases, need at least 10`);
+  presence.push(`long_digit_runs ${label}: ${n}`);
+}
 
 mkdirSync(OUT, { recursive: true });
 // Every non-ASCII character is written as a \u escape so the files stay plain ASCII.

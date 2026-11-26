@@ -42,6 +42,26 @@ private val IFSC = Regex("$JS_B[A-Z]{4}0[A-Z0-9]{6}$JS_B")
 private val MOBILE = Regex("(?<!$D)(?:\\+?91$JS_S_OR_HYPHEN?|0)?[6-9]$D{4}$JS_S_OR_HYPHEN?$D{5}(?!$D)")
 private val LANDLINE = Regex("${JS_B}0$D{2,4}$JS_S_OR_HYPHEN?$D{3,4}$JS_S_OR_HYPHEN?$D{4}$JS_B")
 private val BANK = Regex("$JS_B$D(?:$JS_S_OR_HYPHEN?$D){8,17}$JS_B")
+
+// Aadhaar-shaped but failing Verhoeff, and not a piece of a longer digit run (that is left whole to LONG_RUN).
+private val NEAR_AADHAAR =
+    Regex("(?<!$D$JS_S_OR_HYPHEN?)$JS_B[2-9]$D{3}$JS_S_OR_HYPHEN?$D{4}$JS_S_OR_HYPHEN?$D{4}$JS_B(?!$JS_S_OR_HYPHEN?$D)")
+
+/*
+ * A digit run that may be a bank account even though no label was read (OCR mangles labels: "A/C" came back as "AJC").
+ * Contiguous digits, or groups of at least 3 digits (the last may have 2) joined by one space or hyphen; 9 to 18 digits
+ * in all (checked in code). Letters may touch it. Not a money value or a time: no digit followed by ".", "," or ":"
+ * just before it, and no ".", "," or ":" followed by a digit just after it.
+ */
+private val LONG_RUN = Regex("(?<!$D|$D[.,:])$D{3,}(?:$JS_S_OR_HYPHEN$D{3,})*(?:$JS_S_OR_HYPHEN$D{2})?(?!$D|[.,:]$D)")
+
+/** The same edges, any grouping (the separators BANK tolerates): a run OCR may have split in pieces LONG_RUN does not accept. */
+private val LOOSE_RUN = Regex("(?<!$D|$D[.,:])$D(?:$JS_S_OR_HYPHEN?$D){8,17}(?!$D|[.,:]$D)")
+private const val MIN_RUN_DIGITS = 9
+private const val MAX_RUN_DIGITS = 18
+
+/** ASCII digits only, like t.replace(/\D/g, '').length. */
+private fun digitCount(t: String): Int = t.count { it in '0'..'9' }
 private val NEAR_PAN = Regex("$JS_B[A-Z0-9]{10}$JS_B")
 
 // Digit look-alikes, used to un-confuse OCR misreads.
@@ -59,9 +79,11 @@ private val LABELS: List<Pair<PiiType, Regex>> = listOf(
     PiiType.AADHAAR to Regex("${JS_B}AADHAA?R$JS_B"),
     PiiType.IFSC to Regex("${JS_B}IFSC$JS_B"),
     PiiType.PHONE to Regex("$JS_B(?:MOB(?:ILE)?|PH(?:ONE)?|TEL|CELL|CONTACT)$JS_B"),
+    // A/C also as OCR reads it: the slash as | \ 1 I J L ! 7 (lower-case l is upper-cased to L before matching).
     PiiType.BANK_ACCOUNT to Regex(
         "${JS_B}ACC(?:OUNT|T)?\\.?$JS_S*(?:NO|NUMBER)$JS_B|${JS_B}ACC$JS_S*#|${JS_B}ACCOUNT$JS_B|${JS_B}ACCT$JS_B" +
-            "|${JS_B}A/C(?:$JS_S*(?:NO|NUMBER)$JS_B)?|${JS_B}AC$JS_S*NO$JS_B",
+            "|${JS_B}A/C(?:$JS_S*(?:NO|NUMBER)$JS_B)?|${JS_B}A[|\\\\1IJL!7]C$JS_B(?:$JS_S*(?:NO|NUMBER)$JS_B)?" +
+            "|$JS_B(?:AC|CA)$JS_S*NO$JS_B",
     ),
 )
 private val PARTIAL = Regex("$JS_B[A-Z]{5}$D{1,3}$JS_B")
@@ -106,9 +128,12 @@ fun runShield(words: List<OcrWord>, consentOcrThreshold: Double): ShieldResult {
     // kind: which label a match can satisfy. Exact matches use their own type; a POSSIBLE_ID uses the type it nearly is.
     val meta = mutableListOf<Meta>()
     val reasons = mutableListOf<String>()
+    // Words hidden only because they are a long digit run: for label checks they still count as a possibly missed value.
+    val longRunWords = HashSet<Int>()
 
     // `searchText`, if given, is a same-length transform of the line (look-alike swaps); `ok` gets the ORIGINAL text.
-    fun find(li: Int, re: Regex, type: PiiType, kind: PiiType, ok: (String) -> Boolean = { true }, searchText: String? = null) {
+    fun find(li: Int, re: Regex, type: PiiType, kind: PiiType, ok: (String) -> Boolean = { true }, searchText: String? = null): List<Int> {
+        val found = mutableListOf<Int>()
         val line = lines.getValue(li)
         // findAll is Matcher.find repeated from the previous match's end: the same iteration as matchAll with the g flag
         // (no pattern here can match the empty string).
@@ -121,7 +146,9 @@ fun runShield(words: List<OcrWord>, consentOcrThreshold: Double): ShieldResult {
             claimed.addAll(idx)
             matches.add(PiiMatch(type, idx))
             meta.add(Meta(kind, li, start))
+            found.addAll(idx)
         }
+        return found
     }
 
     for (line in lines.values) {
@@ -137,16 +164,20 @@ fun runShield(words: List<OcrWord>, consentOcrThreshold: Double): ShieldResult {
         if (hasLabel(line.text, PiiType.PHONE)) find(li, LANDLINE, PiiType.PHONE, PiiType.PHONE)
         if (hasLabel(line.text, PiiType.BANK_ACCOUNT) || hasLabel(prev, PiiType.BANK_ACCOUNT)) find(li, BANK, PiiType.BANK_ACCOUNT, PiiType.BANK_ACCOUNT)
         // Near-misses, after every exact matcher so a real type always wins. Over-redaction is harmless; a miss is a leak.
-        find(li, AADHAAR, PiiType.POSSIBLE_ID, PiiType.AADHAAR) // Aadhaar-shaped but failing Verhoeff (valid ones were claimed above)
+        find(li, NEAR_AADHAAR, PiiType.POSSIBLE_ID, PiiType.AADHAAR) // Aadhaar-shaped but failing Verhoeff (valid ones were claimed above)
         find(li, NEAR_PAN, PiiType.POSSIBLE_ID, PiiType.PAN, ::isNearPan)
         find(li, MOBILE, PiiType.POSSIBLE_ID, PiiType.PHONE, ::isNearMobile, toDigits(line.text))
+        // Last: any other run that could be a bank account is hidden too. A miss is a leak; this only hides a reference
+        // number or two from the model, and the maths checks never use such numbers.
+        val n = { t: String -> digitCount(t) >= MIN_RUN_DIGITS && digitCount(t) <= MAX_RUN_DIGITS }
+        longRunWords.addAll(find(li, LONG_RUN, PiiType.POSSIBLE_ID, PiiType.BANK_ACCOUNT, n))
     }
 
     val nearMissWords = matches.filter { it.type == PiiType.POSSIBLE_ID }.flatMap { it.wordIndexes }.toHashSet()
     // Unclaimed digit-bearing words of line `li` whose span lies within [from, to): something that may be a missed value.
     fun suspiciousIn(li: Int, from: Int, to: Int): Boolean {
         val line = lines[li] ?: return false
-        return line.spans.any { s -> s.start >= from && s.end <= to && s.word !in claimed && suspicious(line.text.substring(s.start, s.end)) }
+        return line.spans.any { s -> s.start >= from && s.end <= to && (s.word !in claimed || s.word in longRunWords) && suspicious(line.text.substring(s.start, s.end)) }
     }
 
     for ((li, line) in lines) {
@@ -167,6 +198,14 @@ fun runShield(words: List<OcrWord>, consentOcrThreshold: Double): ShieldResult {
                 }
                 if (!ok) reasons.add("label_without_value:$li")
             }
+        }
+        // A digit run whose visible (unclaimed, non-GSTIN) pieces still hold enough digits to be an account number.
+        for (m in LOOSE_RUN.findAll(line.text)) {
+            val from = m.range.first
+            val to = m.range.last + 1
+            val visible = line.spans.filter { it.start < to && it.end > from && it.word !in claimed && it.word !in gstinWords }
+                .sumOf { digitCount(line.text.substring(maxOf(it.start, from), minOf(it.end, to))) }
+            if (visible >= MIN_RUN_DIGITS) reasons.add("long_digit_run:$li")
         }
         for (s in line.spans) {
             // A near-miss is hidden, but a low-confidence read of it still asks the human (it may be something else).

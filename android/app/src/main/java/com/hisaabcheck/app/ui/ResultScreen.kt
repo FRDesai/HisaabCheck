@@ -167,8 +167,15 @@ fun ResultScreen(vm: BillViewModel, state: BillScreen.Result) {
                 when (info.edit) {
                     EditState.Saving -> "Saving\u2026"
                     EditState.Saved -> "Saved \u2713"
+                    EditState.SavedLocally -> "Saved on this phone"
                     else -> "Save changes"
                 },
+            )
+        }
+        if (info.edit == EditState.SavedLocally) {
+            Text(
+                "Saved on this phone. It will be sent when you are back online.",
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
             )
         }
         (info.edit as? EditState.Error)?.let {

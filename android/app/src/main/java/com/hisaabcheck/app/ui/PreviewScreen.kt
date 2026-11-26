@@ -22,6 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -70,6 +71,12 @@ private val BoxListSaver: Saver<SnapshotStateList<ImgBox>, Any> = Saver(
 /** Shows ONLY the redacted image. Extra boxes are painted onto that redacted image; the original is never available here. */
 @Composable
 fun PreviewScreen(redacted: ByteArray, onSend: (ByteArray) -> Unit, onKeep: () -> Unit) {
+    // Keyed on the image, so a second preview can never inherit the first one's boxes.
+    key(redacted.size, redacted.contentHashCode()) { PreviewContent(redacted, onSend, onKeep) }
+}
+
+@Composable
+private fun PreviewContent(redacted: ByteArray, onSend: (ByteArray) -> Unit, onKeep: () -> Unit) {
     val loaded by produceState<Pair<Boolean, Decoded?>>(false to null, redacted) {
         value = true to withContext(Dispatchers.Default) {
             val bmp = BitmapFactory.decodeByteArray(redacted, 0, redacted.size)
@@ -77,8 +84,7 @@ fun PreviewScreen(redacted: ByteArray, onSend: (ByteArray) -> Unit, onKeep: () -
         }
     }
     val decoded = loaded.second
-    // Keyed on the image, so a second preview can never inherit the first one's boxes.
-    val boxes = rememberSaveable(redacted, saver = BoxListSaver, key = "boxes-${redacted.size}-${redacted.contentHashCode()}") { mutableStateListOf<ImgBox>() }
+    val boxes = rememberSaveable(saver = BoxListSaver) { mutableStateListOf<ImgBox>() }
     var drag by remember { mutableStateOf<ImgBox?>(null) }
     var shown by remember { mutableStateOf(IntSize.Zero) }
     var busy by remember { mutableStateOf(false) }

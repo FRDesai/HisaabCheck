@@ -62,19 +62,19 @@ Every path that ends in **manual entry** (the bill is saved with status `manual_
 - If `total`, `gstin` or `taxSplit` fails, the CA can still approve after ticking "I have checked this bill against the paper copy". The tick covers only the failures listed when it was made. The failed checks are saved on the bill as `approvedWithFailedChecks`.
 - Reject needs a note of 1 to 500 characters. It is shown on the bill as a note to the client.
 - An approved or rejected bill can be reopened; it goes back to draft.
-- Approve, reject, reopen and save wait for the server's answer. If one has not finished after 4 seconds, the screen shows "Still saving — waiting for the connection…". Offline, the buttons stay busy until the connection returns. If the write fails, the screen shows an error and keeps the CA's edits.
+- Approve, reject, reopen and save wait for the server's answer. If one has not finished after 4 seconds, the screen shows "Still saving — waiting for the connection." and adds that the change is kept on this computer and will be sent when the connection is back. The code is written so that offline saves wait like this; this has not been tried offline. If the write fails, the screen shows an error and keeps the CA's edits.
 - Line items are shown read-only. The CA can choose to ignore them, and they are then removed when the bill is saved.
-- If the bill changes in another tab while the form is open, the screen says so and keeps unsaved edits.
+- If the bill is changed elsewhere (for example in another tab) while the form is open, there are three cases. If it was approved or rejected, the form shows the stored values and says so; any unsaved edits are dropped, and the message says they were not saved. If its fields changed and the form has no unsaved edits, the form quietly reloads the new values with no message. If its fields changed and the form has unsaved edits, the edits stay and a message warns that saving will replace the other changes.
 
 **Rules.** Firestore rules (`firebase/firestore.rules`) accept only the four statuses, accept an approval or rejection only in the signed-in owner's own name and at server time (or with the stored review time left as it was), and require a note on a reject.
 
-**CSV.** From the export panel, pick an invoice-date range (it starts at the selected month). The CSV has one row per approved bill in that range, sorted by invoice date, then invoice number: invoice date, invoice no., supplier, supplier GSTIN, place of supply, taxable value, CGST, SGST, IGST, total, read by (device, cloud or manual), approved on, and bill id. It starts with a byte-order mark so Excel reads ₹ and Indian names correctly. A text cell that begins with `=`, `+`, `-`, `@`, a tab or a carriage return gets a leading apostrophe so a spreadsheet does not run it as a formula.
+**CSV.** From the export panel, pick an invoice-date range (it starts at the month chosen in the inbox, or at the current month if the inbox shows all months). The CSV has one row per approved bill in that range, sorted by invoice date, then invoice number: invoice date, invoice no., supplier, supplier GSTIN, place of supply, taxable value, CGST, SGST, IGST, total, read by (device, cloud or manual), approved on, and bill id. It starts with a byte-order mark so Excel reads ₹ and Indian names correctly. A text cell that begins with `=`, `+`, `-`, `@`, a tab or a carriage return gets a leading apostrophe so a spreadsheet does not run it as a formula.
 
 **Tally XML.** The same range gives two files, to be imported in this order:
 1. The ledgers file ("masters"). It creates one ledger per supplier under Sundry Creditors (with the GSTIN if valid), plus `Purchases` (Purchase Accounts), `Input CGST`, `Input SGST`, `Input IGST` (Duties & Taxes) and `Round Off` (Indirect Expenses).
 2. The vouchers file: one Purchase voucher per bill, with the supplier credited and the purchase and tax ledgers debited. A gap of up to ₹1 between taxable value plus tax and the total goes to `Round Off`.
 
-Approved bills whose taxable value plus tax differs from the total by more than ₹1 are left out of the Tally files. The export panel lists them. They are still in the CSV.
+Approved bills are left out of the Tally files if taxable value plus tax differs from the total by more than ₹1, if the total is 0 or less, or if the taxable value works out negative. The export panel lists them. They are still in the CSV.
 
 **The Tally XML has not been imported into a real Tally.** It was written from the format as understood, and nobody has run it. Try it on a test company first.
 

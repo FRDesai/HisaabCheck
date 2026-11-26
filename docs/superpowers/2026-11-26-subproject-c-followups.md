@@ -83,7 +83,7 @@ Web
 - The web shows no "expired" note on an old invite code.
 - An owner who signs in to the web app gets the CA screens with an empty shop list.
 - The web has no button to unlink an owner.
-- The web's offline-cache guard stores the last signed-in uid in localStorage; a first sign-in in a browser with no stored uid is trusted (a cache left by a build from before the guard is not wiped), and a wipe blocked by another open tab signs the user out instead.
+- The web's offline-cache guard stores the last signed-in uid in localStorage; a first sign-in with no stored uid is trusted (a cache left by a build from before the guard is not wiped). A wipe blocked by another open tab, or a second automatic reload in one page session, signs the user out with a message on the login page. Signing out waits 5 seconds for queued changes and then asks "Stay signed in" or "Sign out anyway"; a session that ends by itself loses its queued changes when the next user's sign-in wipes the cache.
 
 Core
 - Words on a negative OCR line are never scanned by either shield (a guard upstream on both platforms).
@@ -143,7 +143,7 @@ Screens
 - The neutral connection message after 10 seconds is not revisited if the save settles later.
 - `done()` runs twice on sign-out from Home (harmless).
 - If the session ends during a configuration change, the bill view model keeps its photo until the activity is destroyed.
-- The Android cache wipe on sign-out (terminate, then clear persistence) has never run on a phone; if the wipe fails it is ignored and the cache stays until the next sign-out or app start. Check step 14 with two owners on one phone.
+- The Android cache wipe and the "Sign out anyway" dialog have never run on a phone. The wipe starts when the signed-out screen is shown (also after a session that ended by itself), waits at most 5 seconds per step, and a failed or timed-out wipe is ignored and tried again at the next session end or app start. Signing out first waits 5 seconds for queued offline changes; if any remain, the owner chooses "Stay signed in" or "Sign out anyway" (which loses them). Check step 14 with two owners on one phone, once offline.
 - The shop's settings (such as "store images") are cached for the session.
 - After "Retry cloud", the earlier attempt's stored photo (including one whose upload finished late and was not linked) stays in Storage, unreferenced; owners cannot delete, so cleanup is the CA's side.
 - "Retry cloud" stays available after the owner has saved edits, and its save still overwrites those edits.

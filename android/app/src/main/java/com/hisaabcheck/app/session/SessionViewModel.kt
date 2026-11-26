@@ -34,6 +34,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
+
+private const val PENDING_WAIT_MS = 5_000L
+private const val WIPE_STEP_MS = 5_000L
 
 sealed interface SessionState {
     data object Loading : SessionState
@@ -80,8 +84,19 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
     private var watchdog: Job? = null
     private var activeUid: String? = null
 
-    /** Wipes Firestore's on-device cache after a sign-out. Work for the next user waits for it (see [signOut]). */
+    /** Wipes Firestore's on-device cache after the session ends. Work for the next user waits for it, up to its timeouts. */
     private var clearJob: Job? = null
+    /** True from the moment the session has ended (or the app starts signed out) until the wipe has been started. */
+    private var wipePending = false
+    private var signOutJob: Job? = null
+
+    private val _confirmSignOut = MutableStateFlow(false)
+    /**
+     * True when changes made offline have not been sent and the owner must choose. The wiring shows "Some changes have not
+     * been sent yet because you are offline. If you sign out now they will be lost." with "Stay signed in" (calls
+     * [cancelSignOut]) and "Sign out anyway" (calls [confirmSignOut]).
+     */
+    val confirmSignOut: StateFlow<Boolean> = _confirmSignOut.asStateFlow()
 
     private val authListener = FirebaseAuth.AuthStateListener { onUser(it.currentUser) }
 
@@ -109,7 +124,7 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
     init {
         auth.addAuthStateListener(authListener)
         // A process that died between sign-out and the wipe must not leave the last owner's cache for the next one.
-        if (auth.currentUser == null) clearCache()
+        if (auth.currentUser == null) wipePending = true
     }
 
     override fun onCleared() {
@@ -187,7 +202,7 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
         _ui.update { it.copy(busy = true, error = null) }
         signInJob = viewModelScope.launch {
             try {
-                clearJob?.join()
+                awaitWipe()
                 auth.signInWithCredential(credential).awaitTask()
                 // The auth listener now moves the state on; the screen is replaced.
                 _ui.update { it.copy(busy = false) }
@@ -201,33 +216,67 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
         }
     }
 
+    /**
+     * Signs out. Changes made offline and not yet sent would be lost with the cache, so this first waits up to 5 seconds
+     * for them; if they are still pending it signs nobody out and sets [confirmSignOut] instead.
+     */
     fun signOut() {
+        if (signOutJob?.isActive == true) return
+        signOutJob = viewModelScope.launch {
+            val settled = withTimeoutOrNull(PENDING_WAIT_MS) {
+                try { Firebase.firestore.waitForPendingWrites().awaitTask(); true } catch (e: CancellationException) { throw e } catch (e: Exception) { false }
+            } ?: false
+            if (settled) endSession() else _confirmSignOut.value = true
+        }
+    }
+
+    /** "Sign out anyway": pending changes are given up. */
+    fun confirmSignOut() {
+        _confirmSignOut.value = false
+        endSession()
+    }
+
+    /** "Stay signed in". */
+    fun cancelSignOut() {
+        _confirmSignOut.value = false
+    }
+
+    private fun endSession() {
         actionJob?.cancel()
         signInJob?.cancel()
-        auth.signOut() // the listener resets the state to SignedOut
-        clearCache()
+        auth.signOut() // the listener resets the state to SignedOut and marks the wipe as pending
     }
 
     /**
-     * Terminates the Firestore instance and deletes its on-device cache, so a second owner on this phone cannot read
-     * the first owner's bills. Callers must have removed their listeners first (the wiring stops "Recent bills"
-     * before calling [signOut]). After `terminate()`, `Firebase.firestore` returns a new, usable instance, and the
-     * stores look it up on every call. Sign-in and the account lookup wait for this job. A failed wipe is ignored.
+     * The wiring calls this when the signed-out screen is on screen. Compose has by then removed the screens of the old
+     * session (and run their dispose effects, which stop the "Recent bills" listener), so nothing listens on the
+     * Firestore instance that is about to be terminated. Safe to call many times.
      */
-    private fun clearCache() {
+    fun onSignedOutShown() = startWipeIfPending()
+
+    private fun startWipeIfPending() {
+        if (!wipePending) return
+        wipePending = false
         val previous = clearJob
         clearJob = viewModelScope.launch {
             previous?.join()
+            // Each step is bounded; a failed or timed-out wipe must not keep the next owner from signing in.
             try {
                 val db = Firebase.firestore
-                db.terminate().awaitTask()
-                db.clearPersistence().awaitTask()
+                val stopped = withTimeoutOrNull(WIPE_STEP_MS) { db.terminate().awaitTask(); true } ?: false
+                if (stopped) withTimeoutOrNull(WIPE_STEP_MS) { db.clearPersistence().awaitTask() }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                // Nothing more can be done here; the next sign-out or start tries again.
+                // Nothing more can be done here; the next session end or start tries again.
             }
         }
+    }
+
+    /** Work for a new session starts only after the wipe of the last one (bounded), however the last one ended. */
+    private suspend fun awaitWipe() {
+        startWipeIfPending()
+        clearJob?.join()
     }
 
     // ---- consent and link ----------------------------------------------------------------------------------
@@ -290,6 +339,7 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
         if (user == null) {
             resolveJob?.cancel()
             actionJob?.cancel()
+            if (activeUid != null) wipePending = true // a signed-in user went away, however it happened
             activeUid = null
             _loadError.value = null
             _state.value = SessionState.SignedOut
@@ -312,7 +362,7 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
         _loadError.value = null
         resolveJob = viewModelScope.launch {
             try {
-                clearJob?.join()
+                awaitWipe()
                 val consent = store.ensureUser(uid, phone)
                 ensureActive()
                 if (consent != CONSENT_VERSION) {

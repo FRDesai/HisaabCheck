@@ -10,7 +10,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -74,6 +77,17 @@ private fun SessionRoot() {
     val vm: SessionViewModel = viewModel()
     val state by vm.state.collectAsState()
     val loadError by vm.loadError.collectAsState()
+    val confirmSignOut by vm.confirmSignOut.collectAsState()
+    // Runs after the screens of the ended session have left composition (and stopped their listeners), then wipes the cache.
+    if (state is SessionState.SignedOut) LaunchedEffect(Unit) { vm.onSignedOutShown() }
+    if (confirmSignOut) {
+        AlertDialog(
+            onDismissRequest = vm::cancelSignOut,
+            text = { Text("Some changes have not been sent yet because you are offline. If you sign out now they will be lost.") },
+            confirmButton = { Button(onClick = vm::cancelSignOut) { Text("Stay signed in") } },
+            dismissButton = { TextButton(onClick = vm::confirmSignOut) { Text("Sign out anyway") } },
+        )
+    }
     when (val s = state) {
         SessionState.Loading -> LoadingScreen(loadError, onRetry = vm::retry, onSignOut = vm::signOut)
         SessionState.SignedOut -> SignInScreen(vm)
@@ -123,7 +137,6 @@ private fun BillRoot(shop: Shop, onSignOut: () -> Unit) {
 
     val signOut = {
         vm.done()
-        vm.stopRecent() // nothing may be listening when the session wipes and terminates Firestore
         onSignOut()
     }
 

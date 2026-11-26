@@ -18,26 +18,41 @@ export default function ReviewForm({ shopId, bill, uid, onReviewed }: { shopId: 
   const [text, setText] = useState(() => toFormText(bill.extraction));
   const [dirty, setDirty] = useState(false);
   const [dropItems, setDropItems] = useState(false);
-  const [confirmed, setConfirmed] = useState(false);
+  const [confirmedKey, setConfirmedKey] = useState<string | null>(null); // the soft-check set the CA ticked for
   const [rejecting, setRejecting] = useState(false);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [changedElsewhere, setChangedElsewhere] = useState(false);
+  const [elsewhere, setElsewhere] = useState<string | null>(null);
+  const [slow, setSlow] = useState(false);
 
   // The listener also fires for our own writes; ownWrite tells those apart from a change made elsewhere.
+  // After a refused write the rollback snapshot can land late, so a failed write keeps ownWrite set for a moment (writeSeq guards newer writes).
   const ownWrite = useRef(false);
+  const writeSeq = useRef(0);
+  const slowTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(slowTimer.current), []);
   const incoming = JSON.stringify(bill.extraction);
   const seen = useRef(incoming);
+  const seenStatus = useRef(bill.status);
   useEffect(() => {
-    if (incoming === seen.current) return;
-    seen.current = incoming;
+    const fieldsChanged = incoming !== seen.current;
+    const statusChanged = bill.status !== seenStatus.current;
+    if (!fieldsChanged && !statusChanged) return;
+    seen.current = incoming; seenStatus.current = bill.status;
     if (ownWrite.current) return;
-    if (dirty) { setChangedElsewhere(true); return; }
+    if (!allowedActions(bill.status).includes('edit')) {
+      if (!statusChanged) return;
+      // Approved or rejected elsewhere: show exactly the stored values beside the new status.
+      setBase(bill.extraction); setText(toFormText(bill.extraction)); setDirty(false); setDropItems(false); setConfirmedKey(null); setRejecting(false);
+      setElsewhere(`This bill was ${bill.status === 'approved' ? 'approved' : 'rejected'} somewhere else.${dirty ? ' Your unsaved edits were not saved.' : ''}`);
+      return;
+    }
+    if (dirty) { setElsewhere('This bill was changed somewhere else. Your unsaved edits are still here; saving will replace the other changes.'); return; }
     setBase(bill.extraction); setText(toFormText(bill.extraction));
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs only when the stored fields change; dirty is read, not watched
-  }, [incoming]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs only when the stored fields or status change; dirty is read, not watched
+  }, [incoming, bill.status]);
 
   const can = allowedActions(bill.status);
   const editable = can.includes('edit');
@@ -55,26 +70,39 @@ export default function ReviewForm({ shopId, bill, uid, onReviewed }: { shopId: 
   const checks = !editable ? bill.checks : parsed.ok ? parsed.checks : null;
   const blockers = parsed.ok ? approvalBlockers(parsed.checks) : [];
   const soft = parsed.ok ? needsConfirmation(parsed.checks) : [];
+  const softKey = soft.join(',');
+  const confirmed = softKey !== '' && confirmedKey === softKey;
+  // A tick covers exactly the failures listed when it was made; any other set needs a fresh tick.
+  useEffect(() => { if (confirmedKey !== null && confirmedKey !== softKey) setConfirmedKey(null); }, [softKey, confirmedKey]);
   const canApprove = parsed.ok && blockers.length === 0 && (soft.length === 0 || confirmed) && busy === null;
 
   async function run(kind: Exclude<Busy, null>, write: () => Promise<void>, after: () => void) {
     if (busy) return;
-    setBusy(kind); setError(null); setSaved(false);
+    setBusy(kind); setError(null); setSaved(false); setElsewhere(null);
+    const seq = ++writeSeq.current;
     ownWrite.current = true;
+    // The server acknowledges only when online; say so if it takes long.
+    clearTimeout(slowTimer.current);
+    slowTimer.current = setTimeout(() => setSlow(true), 4000);
+    let failed = false;
     try { await write(); after(); }
-    catch { setError('Could not save. Check your connection and try again. Your changes are still here.'); }
-    finally { ownWrite.current = false; setBusy(null); }
+    catch { failed = true; setError('Could not save. Check your connection and try again. Your changes are still here.'); }
+    finally {
+      clearTimeout(slowTimer.current); setSlow(false); setBusy(null);
+      if (failed) setTimeout(() => { if (writeSeq.current === seq) ownWrite.current = false; }, 1500);
+      else ownWrite.current = false;
+    }
   }
 
   const save = () => { if (!parsed.ok) return; const p = parsed;
     void run('save', () => saveReviewFields(shopId, bill.id, p.value, p.checks), () => {
-      setBase(p.value); setText(toFormText(p.value)); setDirty(false); setDropItems(false); setChangedElsewhere(false); setSaved(true);
+      setBase(p.value); setText(toFormText(p.value)); setDirty(false); setDropItems(false); setElsewhere(null); setSaved(true);
     }); };
   const approve = () => { if (!parsed.ok || !canApprove) return; const p = parsed;
     void run('approve', () => approveBill(shopId, bill.id, uid, p.value, p.checks, soft), onReviewed); };
   const reject = () => { if (!validRejectNote(note)) return;
     void run('reject', () => rejectBill(shopId, bill.id, uid, note), onReviewed); };
-  const reopen = () => { void run('reopen', () => reopenBill(shopId, bill.id), () => { setRejecting(false); setNote(''); setConfirmed(false); }); };
+  const reopen = () => { void run('reopen', () => reopenBill(shopId, bill.id), () => { setRejecting(false); setNote(''); setConfirmedKey(null); }); };
 
   return (
     <div className="space-y-3">
@@ -86,7 +114,7 @@ export default function ReviewForm({ shopId, bill, uid, onReviewed }: { shopId: 
       {bill.status === 'approved' && bill.approvedWithFailedChecks.length > 0 && (
         <p className="p-3 rounded bg-amber-50 text-amber-900 text-sm">Approved after checking against the paper copy, with: {bill.approvedWithFailedChecks.map((k) => CHECK_MSG[k as keyof typeof CHECK_MSG] ?? k).join('; ')}</p>
       )}
-      {changedElsewhere && <p role="status" className="p-3 rounded bg-amber-50 text-amber-900 text-sm">This bill was changed somewhere else. Your unsaved edits are still here; saving will replace the other changes.</p>}
+      {elsewhere && <p role="status" className="p-3 rounded bg-amber-50 text-amber-900 text-sm">{elsewhere}</p>}
 
       <CheckMessages checks={checks} />
       <FieldInputs text={text} invalid={invalid} checks={checks} disabled={!editable || busy !== null}
@@ -120,7 +148,7 @@ export default function ReviewForm({ shopId, bill, uid, onReviewed }: { shopId: 
           {!parsed.ok && <p role="alert" className="text-sm text-red-700">Fix the fields marked in red before saving or approving.</p>}
           {soft.length > 0 && blockers.length === 0 && (
             <label className="flex items-start gap-2 text-sm p-3 rounded bg-amber-50">
-              <input type="checkbox" className="mt-1" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
+              <input type="checkbox" className="mt-1" checked={confirmed} onChange={(e) => setConfirmedKey(e.target.checked ? softKey : null)} />
               <span>I have checked this bill against the paper copy. ({soft.map((k) => CHECK_MSG[k]).join('; ')})</span>
             </label>
           )}
@@ -143,6 +171,7 @@ export default function ReviewForm({ shopId, bill, uid, onReviewed }: { shopId: 
       {can.includes('reopen') && (
         <button type="button" className="px-5 py-3 rounded-lg border disabled:opacity-50" disabled={busy !== null} onClick={reopen}>{busy === 'reopen' ? 'Reopening…' : 'Reopen for changes'}</button>
       )}
+      {slow && <p role="status" className="text-sm text-amber-900">Still saving — waiting for the connection. Your change is kept on this computer and will be sent when you are back online.</p>}
       {saved && <p role="status" className="text-sm text-emerald-800">Saved ✓</p>}
       {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
     </div>

@@ -21,5 +21,5 @@ export function toCsv(bills: BillDoc[]): string {
       money(e.taxableValue), money(e.cgst), money(e.sgst), money(e.igst), money(e.total),
       readBy(b.route), b.reviewedAt ? istDate(b.reviewedAt) : '', b.id];
   });
-  return `﻿${[[...CSV_HEADER], ...rows].map((r) => r.map(cell).join(',')).join('\r\n')}\r\n`;
+  return `\uFEFF${[[...CSV_HEADER], ...rows].map((r) => r.map(cell).join(',')).join('\r\n')}\r\n`;
 }

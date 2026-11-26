@@ -8,7 +8,7 @@ describe('toCsv', () => {
   it('starts with a BOM, uses CRLF and ends with a line break', () => {
     const csv = toCsv([]);
     expect(csv.charCodeAt(0)).toBe(0xfeff);
-    expect(csv).toBe(`﻿${CSV_HEADER.join(',')}\r\n`);
+    expect(csv).toBe(`\uFEFF${CSV_HEADER.join(',')}\r\n`);
   });
   it('writes one row per bill with two-decimal amounts', () => {
     const b = makeBill('b1', { status: 'approved', reviewedAt: new Date('2026-11-07T20:00:00Z') });

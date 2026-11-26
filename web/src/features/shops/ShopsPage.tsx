@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
-import { createShop, watchShops, type Shop } from '../../adapters/store';
+import { countToReview, createShop, watchShops, type Shop } from '../../adapters/store';
 import { isValidGstin } from '../../core/shield/gstin';
 
 export default function ShopsPage() {
@@ -9,6 +9,16 @@ export default function ShopsPage() {
   const [shops, setShops] = useState<Shop[]>([]);
   const [form, setForm] = useState({ shopName: '', gstin: '', state: '', storeImages: false });
   useEffect(() => watchShops(user!.uid, setShops), [user]);
+  const [toReview, setToReview] = useState<Record<string, number>>({});
+  const shopIds = shops.map((s) => s.id).join(',');
+  useEffect(() => {
+    let alive = true;
+    for (const id of shopIds ? shopIds.split(',') : []) {
+      // A failed count (offline, rules) just shows no number.
+      countToReview(id).then((n) => { if (alive) setToReview((t) => ({ ...t, [id]: n })); }).catch(() => {});
+    }
+    return () => { alive = false; };
+  }, [shopIds]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const gstinOk = form.gstin === '' || isValidGstin(form.gstin.toUpperCase());
@@ -29,8 +39,13 @@ export default function ShopsPage() {
         {shops.length === 0 && <p className="text-slate-600">No shops yet. Add your first client.</p>}
         <ul className="space-y-2">
           {shops.map((s) => (
-            <li key={s.id}><Link className="block p-4 bg-white rounded-lg border hover:border-emerald-600" to={`/shops/${s.id}/upload`}>
-              <span className="font-semibold">{s.shopName}</span> <span className="text-slate-500 text-sm">{s.gstin}</span></Link></li>
+            <li key={s.id} className="p-4 bg-white rounded-lg border flex flex-wrap items-center gap-3">
+              <div className="mr-auto"><span className="font-semibold">{s.shopName}</span> <span className="text-slate-500 text-sm">{s.gstin}</span></div>
+              <Link className="px-3 py-1.5 rounded border hover:border-emerald-600" to={`/shops/${s.id}/bills`}>
+                Bills{toReview[s.id] !== undefined && <span className={`ml-2 px-2 py-0.5 rounded-full text-xs ${toReview[s.id] > 0 ? 'bg-amber-100 text-amber-900' : 'bg-slate-100 text-slate-700'}`}>{toReview[s.id]} to review</span>}
+              </Link>
+              <Link className="px-3 py-1.5 rounded border hover:border-emerald-600" to={`/shops/${s.id}/upload`}>Upload</Link>
+            </li>
           ))}
         </ul>
       </section>

@@ -25,7 +25,8 @@ export default function UploadPage() {
 
   return (
     <div className="space-y-4">
-      <Link to="/shops" className="text-sm underline">← Shops</Link>
+      <div><Link to="/shops" className="text-sm underline">← Shops</Link>
+      <Link to={`/shops/${shopId}/bills`} className="text-sm underline ml-4">Review bills →</Link></div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">{shop?.shopName ?? '…'}</h1>
         <AiStatusChip />

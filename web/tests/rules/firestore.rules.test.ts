@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest';
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc, updateDoc, deleteDoc, collection, query, where, getDocs, orderBy, limit, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, deleteDoc, collection, query, where, getDocs, orderBy, limit, serverTimestamp, deleteField } from 'firebase/firestore';
 
 let env: RulesTestEnvironment;
 // Matches what store.ts writes: server time, a shop the writer owns.
@@ -21,6 +21,7 @@ beforeEach(async () => {
   await env.withSecurityRulesDisabled(async (c) => {
     await setDoc(doc(c.firestore(), 'shops/s1'), { caUid: 'alice', shopName: 'A', gstin: '', state: '', storeImages: false });
     await setDoc(doc(c.firestore(), 'shops/s1/bills/b1'), { total: 1 });
+    await setDoc(doc(c.firestore(), 'shops/s1/bills/d1'), { status: 'draft', total: 118 });
     await setDoc(doc(c.firestore(), 'shops/bobshop'), { caUid: 'bob', shopName: 'B', gstin: '', state: '', storeImages: false });
     await setDoc(doc(c.firestore(), 'users/admin'), { role: 'admin' });
   });
@@ -100,3 +101,47 @@ describe('firestore rules', () => {
   });
 });
 
+
+describe('bill review rules', () => {
+  const d1 = (uid: string) => doc(as(uid), 'shops/s1/bills/d1');
+  const approve = (uid: string) => ({ status: 'approved', reviewedBy: uid, reviewedAt: serverTimestamp() });
+
+  it('the owner approves a bill', async () => {
+    await assertSucceeds(updateDoc(d1('alice'), approve('alice')));
+  });
+  it('another CA cannot approve it', async () => {
+    await assertFails(updateDoc(d1('bob'), approve('bob')));
+  });
+  it('refuses approval in someone else\'s name, without a time, or with a client-chosen time', async () => {
+    await assertFails(updateDoc(d1('alice'), { ...approve('alice'), reviewedBy: 'bob' }));
+    await assertFails(updateDoc(d1('alice'), { status: 'approved', reviewedBy: 'alice' }));
+    await assertFails(updateDoc(d1('alice'), { status: 'approved', reviewedBy: 'alice', reviewedAt: new Date('2020-01-01') }));
+  });
+  it('a reject needs a note of 1 to 500 characters', async () => {
+    const reject = { status: 'rejected', reviewedBy: 'alice', reviewedAt: serverTimestamp() };
+    await assertFails(updateDoc(d1('alice'), reject));
+    await assertFails(updateDoc(d1('alice'), { ...reject, rejectNote: '' }));
+    await assertFails(updateDoc(d1('alice'), { ...reject, rejectNote: 'x'.repeat(501) }));
+    await assertFails(updateDoc(d1('alice'), { ...reject, rejectNote: 5 }));
+    await assertSucceeds(updateDoc(d1('alice'), { ...reject, rejectNote: 'Photo is blurred, please send again' }));
+  });
+  it('refuses an unknown or missing status', async () => {
+    await assertFails(updateDoc(d1('alice'), { status: 'paid' }));
+    await assertFails(setDoc(doc(as('alice'), 'shops/s1/bills/n1'), { total: 1 }));
+  });
+  it('a reviewed bill accepts a later update that leaves the review time alone', async () => {
+    await assertSucceeds(updateDoc(d1('alice'), approve('alice')));
+    await assertSucceeds(updateDoc(d1('alice'), { imagePath: 'shops/s1/bills/d1.jpg' }));
+    await assertFails(updateDoc(d1('alice'), { reviewedAt: new Date('2020-01-01') }));
+  });
+  it('the owner reopens a reviewed bill', async () => {
+    await assertSucceeds(updateDoc(d1('alice'), approve('alice')));
+    await assertSucceeds(updateDoc(d1('alice'), { status: 'draft', reviewedBy: deleteField(), reviewedAt: deleteField(), rejectNote: deleteField(), approvedWithFailedChecks: deleteField() }));
+  });
+  it('sub-project A writes still pass: create, field edit, photo path', async () => {
+    const b = doc(as('alice'), 'shops/s1/bills/a1');
+    await assertSucceeds(setDoc(b, { total: 118, status: 'manual_entry', checks: null, createdAt: serverTimestamp() }));
+    await assertSucceeds(updateDoc(b, { total: 120, checks: { total: true }, editedAt: serverTimestamp() }));
+    await assertSucceeds(updateDoc(b, { imagePath: 'shops/s1/bills/a1.jpg' }));
+  });
+});

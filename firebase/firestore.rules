@@ -11,6 +11,18 @@ service cloud.firestore {
       return signedIn() && get(/databases/$(db)/documents/shops/$(shopId)).data.caUid == uid();
     }
 
+    // Review fields: a fixed status set; approve/reject only in the reviewer's own name and at server time
+    // (or with the stored review time left untouched); a reject always carries a note.
+    function validBill(d) {
+      return d.status in ['draft', 'approved', 'rejected', 'manual_entry']
+        && (!(d.status in ['approved', 'rejected'])
+            || (d.reviewedBy == uid()
+                && (d.reviewedAt == request.time
+                    || (resource != null && 'reviewedAt' in resource.data && d.reviewedAt == resource.data.reviewedAt))))
+        && (d.status != 'rejected'
+            || (d.rejectNote is string && d.rejectNote.size() >= 1 && d.rejectNote.size() <= 500));
+    }
+
     match /users/{userId} {
       allow read: if signedIn() && (uid() == userId || isAdmin());
       allow create: if signedIn() && uid() == userId && request.resource.data.role == 'ca';
@@ -23,7 +35,8 @@ service cloud.firestore {
       allow update: if signedIn() && resource.data.caUid == uid() && request.resource.data.caUid == uid();
 
       match /bills/{billId} {
-        allow read, write: if ownsShop(shopId);
+        allow read, delete: if ownsShop(shopId);
+        allow create, update: if ownsShop(shopId) && validBill(request.resource.data);
       }
     }
 

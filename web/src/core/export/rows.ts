@@ -1,5 +1,6 @@
 import { isIsoDate } from '../dates';
 import type { BillDoc } from '../review/billDoc';
+import type { Extraction } from '../types';
 
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const inRange = (b: BillDoc, from: string, to: string): boolean =>
@@ -18,6 +19,17 @@ export function notApprovedInRange(bills: BillDoc[], from: string, to: string): 
 
 /** Rupees to whole paise. All export arithmetic is done in paise. */
 export const toPaise = (rupees: number): number => Math.round(rupees * 100);
+
+/**
+ * A bill's amounts in whole paise, as both exports use them. A stored taxable value of 0 means "not read",
+ * so it is derived as total - tax. roundOff is whatever is left: total - taxable - tax.
+ */
+export function billAmounts(e: Extraction) {
+  const total = toPaise(e.total), cgst = toPaise(e.cgst), sgst = toPaise(e.sgst), igst = toPaise(e.igst);
+  const tax = cgst + sgst + igst;
+  const taxable = e.taxableValue > 0 ? toPaise(e.taxableValue) : total - tax;
+  return { total, cgst, sgst, igst, tax, taxable, roundOff: total - taxable - tax };
+}
 
 export function paiseToText(paise: number): string {
   const abs = Math.abs(paise);

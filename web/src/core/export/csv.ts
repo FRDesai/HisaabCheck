@@ -1,6 +1,6 @@
 import { istDate } from '../dates';
 import { readBy, type BillDoc } from '../review/billDoc';
-import { paiseToText, toPaise } from './rows';
+import { billAmounts, paiseToText } from './rows';
 
 export const CSV_HEADER = ['Invoice date', 'Invoice no.', 'Supplier', 'Supplier GSTIN', 'Place of supply', 'Taxable value',
   'CGST', 'SGST', 'IGST', 'Total', 'Read by', 'Approved on', 'Bill id'] as const;
@@ -11,14 +11,15 @@ function cell(v: string): string {
   return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }
 
-const money = (n: number): string => paiseToText(toPaise(n));
-
-/** One row per bill, in the order given. UTF-8 BOM so Excel reads ₹ and Indian names correctly. */
+/**
+ * One row per bill, in the order given. UTF-8 BOM so Excel reads ₹ and Indian names correctly.
+ * Taxable value is the one the Tally file books: a stored 0 is written as total - tax.
+ */
 export function toCsv(bills: BillDoc[]): string {
   const rows = bills.map((b) => {
-    const e = b.extraction;
+    const e = b.extraction, a = billAmounts(e);
     return [e.invoiceDate, e.invoiceNo, e.supplierName, e.supplierGstin, e.placeOfSupply,
-      money(e.taxableValue), money(e.cgst), money(e.sgst), money(e.igst), money(e.total),
+      paiseToText(a.taxable), paiseToText(a.cgst), paiseToText(a.sgst), paiseToText(a.igst), paiseToText(a.total),
       readBy(b.route), b.reviewedAt ? istDate(b.reviewedAt) : '', b.id];
   });
   return `\uFEFF${[[...CSV_HEADER], ...rows].map((r) => r.map(cell).join(',')).join('\r\n')}\r\n`;

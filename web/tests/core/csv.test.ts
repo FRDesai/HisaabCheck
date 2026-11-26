@@ -14,6 +14,14 @@ describe('toCsv', () => {
     const b = makeBill('b1', { status: 'approved', reviewedAt: new Date('2026-11-07T20:00:00Z') });
     expect(lines(toCsv([b]))[1]).toBe('2026-11-05,INV-b1,Acme Traders,29ABCDE1234F1Z5,29,100.00,9.00,9.00,0.00,118.00,device,2026-11-08,b1');
   });
+  it('writes the derived taxable value (total - tax) when the stored one is 0, as the Tally file books it', () => {
+    const b = makeBill('z', { extraction: { taxableValue: 0 } });
+    expect(lines(toCsv([b]))[1].split(',')[5]).toBe('100.00');
+  });
+  it('writes a stored taxable value above 0 as it is', () => {
+    const b = makeBill('s', { extraction: { taxableValue: 90 } });
+    expect(lines(toCsv([b]))[1].split(',')[5]).toBe('90.00');
+  });
   it('leaves Approved on empty when unknown and names cloud and manual reads', () => {
     const cloud = makeBill('c', { route: { path: 'cloud', reason: 'total_mismatch', confidence: 1, promptVersion: 'v1', modelName: 'm' } });
     const manual = makeBill('m', { route: null });

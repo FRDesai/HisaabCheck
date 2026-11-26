@@ -1,13 +1,13 @@
+import { isIsoDate } from '../dates';
+import { MAX_ROUND_OFF_PAISE } from '../review/decision';
 import { isValidGstin } from '../shield/gstin';
 import type { BillDoc } from '../review/billDoc';
-import { paiseToText, toPaise } from './rows';
+import { billAmounts, paiseToText } from './rows';
 
 export interface TallyLedgers { purchase: string; cgst: string; sgst: string; igst: string; roundOff: string }
 /** Ledger names used in the export. The masters file creates them, so they need not exist in the company. */
 export const DEFAULT_LEDGERS: TallyLedgers = { purchase: 'Purchases', cgst: 'Input CGST', sgst: 'Input SGST', igst: 'Input IGST', roundOff: 'Round Off' };
 const PARENT = { supplier: 'Sundry Creditors', purchase: 'Purchase Accounts', tax: 'Duties & Taxes', roundOff: 'Indirect Expenses' } as const;
-/** A gap up to ₹1 is rounding; anything larger means the bill's amounts do not add up. */
-const MAX_ROUND_OFF_PAISE = 100;
 
 export interface VoucherEntry { ledger: string; debit: boolean; paise: number }
 
@@ -19,17 +19,12 @@ export function xmlText(s: string): string {
 
 const supplierLedger = (b: BillDoc): string => b.extraction.supplierName.trim() || 'Unknown supplier';
 
-function amounts(b: BillDoc) {
-  const e = b.extraction;
-  const total = toPaise(e.total), cgst = toPaise(e.cgst), sgst = toPaise(e.sgst), igst = toPaise(e.igst);
-  const tax = cgst + sgst + igst;
-  const taxable = e.taxableValue > 0 ? toPaise(e.taxableValue) : total - tax;
-  return { total, cgst, sgst, igst, taxable, roundOff: total - taxable - tax };
-}
-
-/** Ledger entries of one purchase voucher, in whole paise. Credits minus debits is always zero. */
+/**
+ * Ledger entries of one purchase voucher, in whole paise. Any gap goes to Round Off; tax components of 0 or
+ * less get no entry, so credits minus debits is zero for every bill tallyReady() accepts.
+ */
 export function voucherEntries(b: BillDoc, l: TallyLedgers): VoucherEntry[] {
-  const a = amounts(b);
+  const a = billAmounts(b.extraction);
   const out: VoucherEntry[] = [{ ledger: supplierLedger(b), debit: false, paise: a.total }, { ledger: l.purchase, debit: true, paise: a.taxable }];
   if (a.cgst > 0) out.push({ ledger: l.cgst, debit: true, paise: a.cgst });
   if (a.sgst > 0) out.push({ ledger: l.sgst, debit: true, paise: a.sgst });
@@ -38,12 +33,18 @@ export function voucherEntries(b: BillDoc, l: TallyLedgers): VoucherEntry[] {
   return out;
 }
 
-/** Splits bills into those that make a sound voucher and those whose amounts are more than ₹1 apart. */
+/**
+ * Splits bills into those that make a sound voucher and the rest: a bill is left out when its invoice date is
+ * not a valid YYYY-MM-DD date, the total is not above 0, a tax component or the taxable value is negative,
+ * or taxable value + tax is more than ₹1 away from the total.
+ */
 export function tallyReady(bills: BillDoc[]): { ok: BillDoc[]; unbalanced: BillDoc[] } {
   const ok: BillDoc[] = [], unbalanced: BillDoc[] = [];
   for (const b of bills) {
-    const a = amounts(b);
-    (a.total > 0 && a.taxable >= 0 && Math.abs(a.roundOff) <= MAX_ROUND_OFF_PAISE ? ok : unbalanced).push(b);
+    const a = billAmounts(b.extraction);
+    const sound = isIsoDate(b.extraction.invoiceDate) && a.total > 0 && a.cgst >= 0 && a.sgst >= 0 && a.igst >= 0
+      && a.taxable >= 0 && Math.abs(a.roundOff) <= MAX_ROUND_OFF_PAISE;
+    (sound ? ok : unbalanced).push(b);
   }
   return { ok, unbalanced };
 }

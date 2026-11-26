@@ -64,6 +64,15 @@ describe('tallyReady', () => {
     expect(r.ok.map((b) => b.id)).toEqual(['g', 'e']);
     expect(r.unbalanced.map((b) => b.id)).toEqual(['x', 'n']);
   });
+  it('leaves out a bill with a negative tax component even when the sum balances', () => {
+    const b = makeBill('m', { extraction: { cgst: 18.5, sgst: -0.5 } });
+    expect(tallyReady([b])).toEqual({ ok: [], unbalanced: [b] });
+  });
+  it('leaves out a bill without a valid invoice date', () => {
+    const bad = ['', '2026-02-30', '05-11-2026'].map((d, i) => makeBill(`d${i}`, { extraction: { invoiceDate: d } }));
+    expect(tallyReady(bad).ok).toEqual([]);
+    expect(tallyReady(bad).unbalanced).toHaveLength(3);
+  });
 });
 
 describe('toTallyVouchersXml', () => {

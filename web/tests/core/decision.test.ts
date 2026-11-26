@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { allowedActions, approvalBlockers, failedChecks, needsConfirmation, validRejectNote } from '../../src/core/review/decision';
+import { allowedActions, approvalBlockers, confirmationItems, failedChecks, needsConfirmation, taxableMismatch, validRejectNote } from '../../src/core/review/decision';
+import { makeBill } from '../billFixtures';
+import { runChecks } from '../../src/core/checks/checks';
+import { parseConfig } from '../../src/core/config/parseConfig';
+import { gstinCheckChar } from '../../src/core/shield/gstin';
+import type { Extraction } from '../../src/core/types';
 
 const ok = { total: true, gstin: true, taxSplit: true, date: true, required: true };
 
@@ -45,5 +50,38 @@ describe('validRejectNote', () => {
     expect(validRejectNote('Photo is blurred')).toBe(true);
     expect(validRejectNote('x'.repeat(500))).toBe(true);
     expect(validRejectNote('x'.repeat(501))).toBe(false);
+  });
+});
+
+describe('taxableMismatch', () => {
+  const ex = (over: Partial<Extraction>) => makeBill('t', { extraction: over }).extraction;
+  const items = [{ description: 'Rice', hsn: '1006', qty: 1, rate: 100, amount: 100 }];
+  it('is false when taxable value + tax = total', () => expect(taxableMismatch(ex({}))).toBe(false));
+  it('catches a wrong stored taxable value even when the line items add up (probe: 90)', () => {
+    const e = ex({ items, taxableValue: 90, supplierGstin: `29ABCDE1234F1Z${gstinCheckChar('29ABCDE1234F1Z')}` });
+    expect(runChecks(e, parseConfig({}, true), new Date('2026-11-26T06:00:00Z')).checks).toEqual(ok); // the checks do not see it
+    expect(taxableMismatch(e)).toBe(true);
+  });
+  it('derives a stored 0 as total - tax, so it passes (probe: 0)', () => {
+    expect(taxableMismatch(ex({ items, taxableValue: 0 }))).toBe(false);
+  });
+  it('allows a gap of exactly 1 rupee and refuses anything over', () => {
+    expect(taxableMismatch(ex({ taxableValue: 99 }))).toBe(false);
+    expect(taxableMismatch(ex({ taxableValue: 101 }))).toBe(false);
+    expect(taxableMismatch(ex({ taxableValue: 98.99 }))).toBe(true);
+    expect(taxableMismatch(ex({ taxableValue: 101.01 }))).toBe(true);
+  });
+  it('is true when the derived taxable value is negative', () => {
+    expect(taxableMismatch(ex({ taxableValue: 0, cgst: 80, sgst: 80, total: 118 }))).toBe(true);
+  });
+});
+
+describe('confirmationItems', () => {
+  const ex = (over: Partial<Extraction>) => makeBill('t', { extraction: over }).extraction;
+  it('lists the failed soft checks, then taxable when it does not add up', () => {
+    expect(confirmationItems(ok, ex({}))).toEqual([]);
+    expect(confirmationItems({ ...ok, gstin: false }, ex({}))).toEqual(['gstin']);
+    expect(confirmationItems(ok, ex({ taxableValue: 90 }))).toEqual(['taxable']);
+    expect(confirmationItems({ ...ok, total: false, taxSplit: false, date: false }, ex({ taxableValue: 90 }))).toEqual(['total', 'taxSplit', 'taxable']);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { exportable, fileSlug, notApprovedInRange, paiseToText, toPaise } from '../../src/core/export/rows';
+import { billAmounts, exportable, fileSlug, notApprovedInRange, paiseToText, toPaise } from '../../src/core/export/rows';
 import { makeBill } from '../billFixtures';
 
 const ap = (id: string, invoiceDate: string, invoiceNo = `INV-${id}`) => makeBill(id, { status: 'approved', extraction: { invoiceDate, invoiceNo } });
@@ -53,5 +53,22 @@ describe('fileSlug', () => {
     expect(fileSlug('  ../../etc  ')).toBe('etc');
     expect(fileSlug('दुकान')).toBe('shop');
     expect(fileSlug('')).toBe('shop');
+  });
+});
+
+describe('billAmounts', () => {
+  const amounts = (over: Parameters<typeof makeBill>[1] = {}) => billAmounts(makeBill('a', over).extraction);
+  it('works in whole paise and uses the stored taxable value when it is above zero', () => {
+    expect(amounts()).toEqual({ total: 11800, cgst: 900, sgst: 900, igst: 0, tax: 1800, taxable: 10000, roundOff: 0 });
+  });
+  it('derives the taxable value as total minus tax when the stored one is 0', () => {
+    expect(amounts({ extraction: { taxableValue: 0 } })).toMatchObject({ taxable: 10000, roundOff: 0 });
+  });
+  it('puts any gap in roundOff = total - taxable - tax', () => {
+    expect(amounts({ extraction: { taxableValue: 90 } })).toMatchObject({ taxable: 9000, roundOff: 1000 });
+    expect(amounts({ extraction: { taxableValue: 100.45 } })).toMatchObject({ taxable: 10045, roundOff: -45 });
+  });
+  it('avoids float drift', () => {
+    expect(amounts({ extraction: { taxableValue: 0.1 + 0.2, cgst: 0.027, sgst: 0.027, total: 0.35 } })).toMatchObject({ taxable: 30, tax: 6, roundOff: -1 });
   });
 });

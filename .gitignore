@@ -11,3 +11,10 @@ android/local.properties
 android/app/google-services.json
 *.apk
 .kotlin/
+
+# Android Studio and signing
+.idea/
+*.iml
+*.jks
+*.keystore
+captures/

@@ -15,8 +15,13 @@ const STATUS_TONE: Record<BillStatus, string> = { draft: 'bg-slate-200 text-slat
 const rupees = (n: number) => `₹${n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const monthLabel = (m: string) => new Date(`${m}-01T00:00:00Z`).toLocaleString('en-IN', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 
+/** Remounts the page body per shop so no state from the previous shop can render. */
 export default function InboxPage() {
   const { shopId } = useParams();
+  return <Inbox key={shopId} shopId={shopId} />;
+}
+
+function Inbox({ shopId }: { shopId: string | undefined }) {
   const location = useLocation();
   const { shop, failed: shopFailed } = useShop(shopId);
   const [max, setMax] = useState(BILL_PAGE);
@@ -73,7 +78,7 @@ export default function InboxPage() {
 
       {error && (
         <p role="alert" className="text-red-700">The bills could not be loaded. Check your connection.{' '}
-          <button type="button" className="underline" onClick={() => setAttempt(attempt + 1)}>Try again</button></p>
+          <button type="button" className="underline" onClick={() => setAttempt((a) => a + 1)}>Try again</button></p>
       )}
       {!error && bills === null && <p role="status" className="text-slate-600">Loading bills…</p>}
       {!error && bills !== null && shown.length === 0 && (

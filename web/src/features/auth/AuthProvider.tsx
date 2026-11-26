@@ -3,7 +3,7 @@ import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
 import { auth } from '../../firebase';
 import { ensureUser, type UserDoc } from '../../adapters/store';
 import { cacheActionOnSignIn } from '../../core/session/cacheOwner';
-import { clearLocalCache, readCacheOwner, writeCacheOwner } from '../../session';
+import { BLOCKED_NOTICE, clearLocalCache, clearReloadedMark, forgetCacheOwner, hasReloadedForCache, markReloadedForCache, readCacheOwner, setLoginNotice, writeCacheOwner } from '../../session';
 
 type Ctx = { user: User | null; profile: UserDoc | null; loading: boolean; error: string | null; refresh(): Promise<void> };
 const AuthCtx = createContext<Ctx>({ user: null, profile: null, loading: true, error: null, refresh: async () => {} });
@@ -32,12 +32,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoading(true); setError(null);
     // Before anything reads Firestore: the offline cache must not hold another user's data (for example after a
     // sign-out that did not go through signOutAndClear, such as a revoked token).
-    const action = cacheActionOnSignIn(readCacheOwner(), u.uid);
-    if (action === 'clear') {
-      if (await clearLocalCache()) { writeCacheOwner(u.uid); window.location.reload(); }
-      else { try { await signOut(auth); } catch { /* go to login anyway */ } window.location.assign('/login'); }
+    const action = cacheActionOnSignIn(readCacheOwner(), u.uid, hasReloadedForCache());
+    if (action === 'clear' || action === 'blocked') {
+      if (action === 'clear' && await clearLocalCache()) {
+        forgetCacheOwner(); // so a failed write below cannot leave the old uid behind to loop on
+        writeCacheOwner(u.uid);
+        markReloadedForCache(); // the reload may happen once; a second need ends in the message below
+        window.location.reload();
+      } else {
+        setLoginNotice(BLOCKED_NOTICE);
+        try { await signOut(auth); } catch { /* go to login anyway */ }
+        window.location.assign('/login');
+      }
       return; // stay on "Loading" until the page reloads
     }
+    clearReloadedMark();
     if (action === 'record') writeCacheOwner(u.uid);
     try {
       const prof = await ensureUser(u);

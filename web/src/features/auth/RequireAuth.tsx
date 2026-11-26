@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Navigate } from 'react-router-dom';
-import { signOutAndClear } from '../../session';
+import SignOutControl from './SignOutControl';
 import { useAuth } from './AuthProvider';
 import { CONSENT_VERSION } from '../../adapters/store';
 
@@ -12,7 +12,7 @@ export function RequireAuth({ children, consent = true }: { children: ReactNode;
       <p className="text-red-700">{error}</p>
       <div className="flex gap-3">
         <button className="px-4 py-2 rounded-lg bg-emerald-700 text-white" onClick={() => void refresh()}>Try again</button>
-        <button className="px-4 py-2 rounded-lg border" onClick={() => void signOutAndClear()}>Sign out</button>
+        <SignOutControl className="px-4 py-2 rounded-lg border" />
       </div>
     </div>
   );

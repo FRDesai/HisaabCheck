@@ -17,4 +17,11 @@ describe('cacheActionOnSignIn', () => {
   it('is case sensitive, as uids are', () => {
     expect(cacheActionOnSignIn('uid-a', 'UID-A')).toBe('clear');
   });
+  it('blocks a second automatic clear in the same page session, so a failed write cannot loop', () => {
+    expect(cacheActionOnSignIn('uid-a', 'uid-b', true)).toBe('blocked');
+  });
+  it('still keeps and records after a reload has happened', () => {
+    expect(cacheActionOnSignIn('uid-a', 'uid-a', true)).toBe('keep');
+    expect(cacheActionOnSignIn(null, 'uid-a', true)).toBe('record');
+  });
 });

@@ -1,4 +1,5 @@
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
+import { clearLoginNotice, readLoginNotice } from '../../session';
 import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { Navigate } from 'react-router-dom';
 import { auth, USE_EMULATORS } from '../../firebase';
@@ -9,6 +10,8 @@ const DevSignIn = import.meta.env.DEV && USE_EMULATORS ? lazy(() => import('../.
 export default function LoginPage() {
   const { user } = useAuth();
   const [error, setError] = useState<string | null>(null);
+  const [notice] = useState(readLoginNotice);
+  useEffect(() => { clearLoginNotice(); }, []); // shown once
   if (user) return <Navigate to="/shops" replace />;
   async function signIn() {
     setError(null);
@@ -23,6 +26,7 @@ export default function LoginPage() {
         <button className="px-6 py-3 rounded-lg bg-emerald-700 text-white text-lg" onClick={signIn}>
           Sign in with Google
         </button>
+        {notice && <p role="alert" className="text-red-700 text-sm">{notice}</p>}
         {error && <p role="alert" className="text-red-700 text-sm">{error}</p>}
         {DevSignIn && <Suspense fallback={null}><DevSignIn /></Suspense>}
       </div>

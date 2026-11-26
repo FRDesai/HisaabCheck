@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { signOutAndClear } from '../../session';
+import SignOutControl from './SignOutControl';
 import { CONSENT_VERSION, recordConsent } from '../../adapters/store';
 import { useAuth } from './AuthProvider';
 
@@ -30,7 +30,7 @@ export default function ConsentPage() {
       <div className="flex gap-3">
         <button disabled={saving} className="px-5 py-3 rounded-lg bg-emerald-700 text-white disabled:opacity-60" onClick={agree}>
           {saving ? 'Saving…' : 'I agree'}</button>
-        <button className="px-5 py-3 rounded-lg border" onClick={() => void signOutAndClear()}>Not now</button>
+        <SignOutControl label="Not now" className="px-5 py-3 rounded-lg border" />
       </div>
     </main>
   );

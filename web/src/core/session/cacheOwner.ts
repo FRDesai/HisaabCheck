@@ -4,9 +4,14 @@
  * 'keep': same user, use the cache. 'record': nothing recorded, remember this user. 'clear': another user's
  * data may be cached, so wipe it before anything is shown.
  */
-export type CacheAction = 'keep' | 'record' | 'clear';
+export type CacheAction = 'keep' | 'record' | 'clear' | 'blocked';
 
-export function cacheActionOnSignIn(recorded: string | null, signedInUid: string): CacheAction {
+/**
+ * `reloadedAlready` is true when this page session has already cleared and reloaded once. A second 'clear' is then
+ * 'blocked': the caller signs the user out with a message instead of reloading for ever.
+ */
+export function cacheActionOnSignIn(recorded: string | null, signedInUid: string, reloadedAlready = false): CacheAction {
   if (!recorded) return 'record';
-  return recorded === signedInUid ? 'keep' : 'clear';
+  if (recorded === signedInUid) return 'keep';
+  return reloadedAlready ? 'blocked' : 'clear';
 }

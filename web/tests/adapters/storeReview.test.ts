@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Checks, Extraction } from '../../src/core/types';
 
 const m = vi.hoisted(() => ({
-  updateDoc: vi.fn(), onSnapshot: vi.fn(), getDocs: vi.fn(), getCountFromServer: vi.fn(), getDownloadURL: vi.fn(),
+  updateDoc: vi.fn(), onSnapshot: vi.fn(), getDocsFromServer: vi.fn(), getCountFromServer: vi.fn(), getDownloadURL: vi.fn(),
 }));
 vi.mock('../../src/firebase', () => ({ db: {}, storage: {} }));
 vi.mock('firebase/firestore', () => ({
@@ -13,7 +13,7 @@ vi.mock('firebase/firestore', () => ({
   orderBy: (field: string, dir = 'asc') => ({ orderBy: [field, dir] }),
   limit: (n: number) => ({ limit: n }),
   deleteField: () => 'DEL', serverTimestamp: () => 'TS',
-  updateDoc: m.updateDoc, onSnapshot: m.onSnapshot, getDocs: m.getDocs, getCountFromServer: m.getCountFromServer,
+  updateDoc: m.updateDoc, onSnapshot: m.onSnapshot, getDocsFromServer: m.getDocsFromServer, getCountFromServer: m.getCountFromServer,
   addDoc: vi.fn(), getDoc: vi.fn(), setDoc: vi.fn(),
 }));
 vi.mock('firebase/storage', () => ({ ref: (_s: unknown, path: string) => ({ path }), uploadBytes: vi.fn(), getDownloadURL: m.getDownloadURL }));
@@ -111,11 +111,15 @@ describe('reads', () => {
     expect(q.path).toBe('shops/s1/bills');
     expect(q.parts).toEqual([{ where: ['status', 'in', ['draft', 'manual_entry']] }]);
   });
-  it('fetchBillsByInvoiceDate queries the date range only', async () => {
-    m.getDocs.mockResolvedValue({ docs: [snapDoc('b1', { invoiceDate: '2026-11-05', status: 'approved' })] });
+  it('fetchBillsByInvoiceDate reads the date range from the server, never the offline cache', async () => {
+    m.getDocsFromServer.mockResolvedValue({ docs: [snapDoc('b1', { invoiceDate: '2026-11-05', status: 'approved' })] });
     const out = await fetchBillsByInvoiceDate('s1', '2026-11-01', '2026-11-30');
     expect(out[0]).toMatchObject({ id: 'b1', status: 'approved' });
-    expect(m.getDocs.mock.calls[0][0].parts).toEqual([{ where: ['invoiceDate', '>=', '2026-11-01'] }, { where: ['invoiceDate', '<=', '2026-11-30'] }, { orderBy: ['invoiceDate', 'asc'] }]);
+    expect(m.getDocsFromServer.mock.calls[0][0].parts).toEqual([{ where: ['invoiceDate', '>=', '2026-11-01'] }, { where: ['invoiceDate', '<=', '2026-11-30'] }, { orderBy: ['invoiceDate', 'asc'] }]);
+  });
+  it('fetchBillsByInvoiceDate fails when the server cannot be reached', async () => {
+    m.getDocsFromServer.mockRejectedValue(new Error('unavailable'));
+    await expect(fetchBillsByInvoiceDate('s1', '2026-11-01', '2026-11-30')).rejects.toThrow('unavailable');
   });
   it('billImageUrl asks Storage for a download URL', async () => {
     m.getDownloadURL.mockResolvedValue('https://x/y.jpg');

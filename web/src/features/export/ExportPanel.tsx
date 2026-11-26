@@ -52,7 +52,7 @@ export default function ExportPanel({ shop, month, refreshKey }: { shop: Shop; m
       </div>
       {!rangeOk && <p role="alert" className="text-sm text-red-700">Choose a From date that is on or before the To date.</p>}
       {state === 'loading' && <p role="status" className="text-sm text-slate-600">Counting bills…</p>}
-      {state === 'error' && <p role="alert" className="text-sm text-red-700">The bills for this range could not be loaded. Check your connection and change a date to try again.</p>}
+      {state === 'error' && <p role="alert" className="text-sm text-red-700">Export needs a connection: the bills for this range could not be loaded from the server. Check your connection and change a date to try again.</p>}
       {found && (
         <p role="status" className="text-sm text-slate-700">
           {found.ready.length} approved bill{found.ready.length === 1 ? '' : 's'} in this range.
@@ -61,7 +61,7 @@ export default function ExportPanel({ shop, month, refreshKey }: { shop: Shop; m
       )}
       {tally.ok.length > 0 && <p className="text-xs text-slate-600">For Tally, import the ledgers file first, then the vouchers file. Try it on a test company first: this format has not been checked against every Tally version.</p>}
       {tally.unbalanced.length > 0 && (
-        <p role="status" className="text-sm text-amber-900">{tally.unbalanced.length} approved bill{tally.unbalanced.length === 1 ? ' is' : 's are'} left out of the Tally files because taxable value + tax differs from the total by more than ₹1: {tally.unbalanced.map((b) => b.extraction.invoiceNo || b.id).join(', ')}. They are in the CSV.</p>
+        <p role="status" className="text-sm text-amber-900">{tally.unbalanced.length} approved bill{tally.unbalanced.length === 1 ? ' is' : 's are'} left out of the Tally files because their amounts do not add up (taxable value + tax is more than ₹1 away from the total), or the invoice date or an amount is not valid: {tally.unbalanced.map((b) => b.extraction.invoiceNo || b.id).join(', ')}. They are in the CSV.</p>
       )}
     </section>
   );

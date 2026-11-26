@@ -1,5 +1,5 @@
 import type { User } from 'firebase/auth';
-import { addDoc, collection, deleteField, doc, getCountFromServer, getDoc, getDocs, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where, limit } from 'firebase/firestore';
+import { addDoc, collection, deleteField, doc, getCountFromServer, getDoc, getDocsFromServer, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where, limit } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { db, storage } from '../firebase';
 import type { Checks, Extraction, ProcessedBill } from '../core/types';
@@ -115,9 +115,13 @@ export async function countToReview(shopId: string): Promise<number> {
   return s.data().count;
 }
 
-/** One-off read for export: every bill dated from..to, any status. Not capped by the inbox page size. */
+/**
+ * One-off read for export: every bill dated from..to, any status. Not capped by the inbox page size.
+ * From the server only: offline, getDocs would answer from whatever this browser has cached and the export
+ * would be silently partial; this fails instead.
+ */
 export async function fetchBillsByInvoiceDate(shopId: string, from: string, to: string): Promise<BillDoc[]> {
-  const s = await getDocs(query(billsCol(shopId), where('invoiceDate', '>=', from), where('invoiceDate', '<=', to), orderBy('invoiceDate')));
+  const s = await getDocsFromServer(query(billsCol(shopId), where('invoiceDate', '>=', from), where('invoiceDate', '<=', to), orderBy('invoiceDate')));
   return s.docs.map((d) => toBillDoc(d.id, d.data(SNAP)));
 }
 

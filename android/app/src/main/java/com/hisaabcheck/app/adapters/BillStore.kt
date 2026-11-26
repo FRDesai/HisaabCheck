@@ -69,7 +69,9 @@ class BillStore {
 
         val image = bill.redactedImage
         val photo: Deferred<PhotoResult> = if (shop.storeImages && image != null) {
-            val imagePath = "shops/${shop.id}/bills/${billRef.id}.jpg"
+            // Each save uploads under its own new name: an owner may only add objects, never overwrite, so a retry
+            // (with the boxes added in its own preview) must not depend on, or fall back to, an earlier attempt's photo.
+            val imagePath = "shops/${shop.id}/bills/${billRef.id}-${System.currentTimeMillis().toString(36)}.jpg"
             scope.async {
                 try {
                     val meta = StorageMetadata.Builder().setContentType("image/jpeg").build()
@@ -79,16 +81,7 @@ class BillStore {
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    // A retry may find the photo already stored by an earlier attempt (uploads are never overwritten).
-                    try {
-                        storage.reference.child(imagePath).metadata.awaitTask()
-                        billRef.update("imagePath", imagePath).awaitTask()
-                        PhotoResult.STORED
-                    } catch (e2: CancellationException) {
-                        throw e2
-                    } catch (e2: Exception) {
-                        PhotoResult.FAILED
-                    }
+                    PhotoResult.FAILED
                 }
             }
         } else CompletableDeferred(PhotoResult.SKIPPED)

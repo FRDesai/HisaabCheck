@@ -54,7 +54,7 @@ class ChecksTest {
         assertFalse(runChecks(base.copy(invoiceDate = "2026-00-10"), cfg, today).checks.date)
         assertFalse(runChecks(base.copy(invoiceDate = "2026-11-00"), cfg, today).checks.date)
         // Non-ASCII digits are not \d in JavaScript.
-        assertFalse(runChecks(base.copy(invoiceDate = "2026-11-0٢"), cfg, today).checks.date)
+        assertFalse(runChecks(base.copy(invoiceDate = "2026-11-0\u0662"), cfg, today).checks.date)
     }
 
     @Test

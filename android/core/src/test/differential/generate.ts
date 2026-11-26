@@ -37,8 +37,8 @@ const num = (n: number) => (Object.is(n, -0) ? '-0' : String(n));
 
 // ---------------------------------------------------------------- shield
 
-const JS_WS = ['\t', '\n', '\u000B', '\u000C', '\r', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', '　', '﻿'];
-const NOT_WS = ['\u0085', '᠎', '​', '\u001C'];
+const JS_WS = ['\t', '\n', '\u000B', '\u000C', '\r', ' ', '\u00A0', '\u1680', '\u2000', '\u2005', '\u200A', '\u2028', '\u2029', '\u202F', '\u205F', '\u3000', '\uFEFF'];
+const NOT_WS = ['\u0085', '\u180E', '\u200B', '\u001C'];
 const UPPER = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 const DIG = '0123456789';
 const rs = (alphabet: string, n: number) => Array.from({ length: n }, () => alphabet[int(alphabet.length)]).join('');
@@ -79,7 +79,7 @@ const mobile = () => pick(['6', '7', '8', '9']) + rs(DIG, 9);
 const LABEL_WORDS = ['PAN', 'PAN:', 'Pan No', 'Aadhaar', 'AADHAR No:', 'IFSC', 'IFSC Code:', 'Mob', 'Mobile:', 'Ph:', 'Phone', 'Tel', 'Cell', 'Contact',
   'A/c', 'A/c No:', 'Acc No.', 'Account Number', 'Account', 'Acct', 'AC NO', 'Acc#', 'Bank Account Details', 'GSTIN:', 'GSTIN/UIN'];
 const FILLER = ['Ref', 'Total', 'Rs.', '1,770.00', 'Qty', '12', 'ABCDE12', 'Invoice', 'INV-2026-001', '2026-11-02', 'Rice', 'HSN', '1006',
-  'CGST', '9%', 'Karnataka', '29-Karnataka', 'smudge', '____', 'No', 'No.', '#', ':', 'straße', 'été', '١٢٣',
+  'CGST', '9%', 'Karnataka', '29-Karnataka', 'smudge', '____', 'No', 'No.', '#', ':', 'stra\u00DFe', '\u00E9t\u00E9', '\u0661\u0662\u0663',
   'aapfu0939f', 'Thank', 'you', 'ABCDEFGHIJ', 'A1B2C3D4E5', 'INV/123/45678', '080', '2345', '6789', '22AAAAA0000A1Z5'];
 
 function piiToken(): string {
@@ -145,12 +145,12 @@ const shieldCases = Array.from({ length: 2500 }, () => {
 
 // ---------------------------------------------------------------- parseExtraction
 
-const NUMERIC_STRINGS = ['₹1,770.00', '1770/-', '₹1,770/-', 'Rs. 12', 'rs.12', 'RS 5', '0x1f', '0X1F', '-0x1f', '0o17', '0b101', ' 12 ', '', '  ',
-  '1e3', '1E-3', '.5', '5.', '+5', '-5', '- 5', 'Infinity', '-Infinity', '+Infinity', 'NaN', '-', '1_000', '١٢', '12 34', '1,2,3',
-  '12/-/-', '12/- ', ' 12/-', '1e400', '00012', '0.1e1', '1.2.3', 'abc', '12abc', '﻿7　', '7\u001C', '1 2', 'R s 5', 'Rs.Rs.9',
-  '₹₹', '/-', '9/-x', '0', '-0', '29', '14', 'many', '1e21', '123456789012345678901234567890'];
-const TEXT_STRINGS = ['Ravi Traders', ' 29aagcb7383j1z4 ', '29AAG CB7383J1Z4', '29AAG CB7383 J1Z4﻿', '4521', '2026-11-02', '29-Karnataka',
-  '', '\u001CRavi\u001F', '﻿ Ravi　', 'straße', 'a,}', 'x\ny', 'é', 'Rice', '1006'];
+const NUMERIC_STRINGS = ['\u20B91,770.00', '1770/-', '\u20B91,770/-', 'Rs. 12', 'rs.12', 'RS 5', '0x1f', '0X1F', '-0x1f', '0o17', '0b101', ' 12 ', '', '  ',
+  '1e3', '1E-3', '.5', '5.', '+5', '-5', '- 5', 'Infinity', '-Infinity', '+Infinity', 'NaN', '-', '1_000', '\u0661\u0662', '12\u00A034', '1,2,3',
+  '12/-/-', '12/- ', ' 12/-', '1e400', '00012', '0.1e1', '1.2.3', 'abc', '12abc', '\uFEFF7\u3000', '7\u001C', '1\u20082', 'R s 5', 'Rs.Rs.9',
+  '\u20B9\u20B9', '/-', '9/-x', '0', '-0', '29', '14', 'many', '1e21', '123456789012345678901234567890'];
+const TEXT_STRINGS = ['Ravi Traders', ' 29aagcb7383j1z4 ', '29AAG CB7383J1Z4', '29AAG\u00A0CB7383\u2009J1Z4\uFEFF', '4521', '2026-11-02', '29-Karnataka',
+  '', '\u001CRavi\u001F', '\uFEFF Ravi\u3000', 'stra\u00DFe', 'a,}', 'x\ny', '\u00E9', 'Rice', '1006'];
 const NUMBERS = [0, -0, 1, 1770, 1770.8, 0.9, 1.5, -3, 7, 1e21, 1e-7, 123e-20, 0.1, 2.5, 14, 1e300, 4521, 29, 100, 135, 0.30000000000000004, 5e-324, 1.7976931348623157e308];
 
 function randomValue(depth = 0): unknown {
@@ -172,10 +172,10 @@ const FIELDS = ['supplierName', 'supplierGstin', 'invoiceNo', 'invoiceDate', 'pl
 
 function mutate(s: string): string {
   switch (int(12)) {
-    case 0: return s.replace(/([}\]])/g, (m) => (chance(0.5) ? ',' + pick(['', ' ', '\n', ' ', '　']) + m : m));
+    case 0: return s.replace(/([}\]])/g, (m) => (chance(0.5) ? ',' + pick(['', ' ', '\n', '\u00A0', '\u3000']) + m : m));
     case 1: return 'Here you go:\n```json\n' + s + '\n```';
     case 2: return s.slice(0, int(s.length + 1));
-    case 3: { const i = int(s.length); return s.slice(0, i) + pick(['"', ',', '{', '}', '[', ']', ':', '0', '\t', ' ', '01', '+', '.', '\\x']) + s.slice(i + 1); }
+    case 3: { const i = int(s.length); return s.slice(0, i) + pick(['"', ',', '{', '}', '[', ']', ':', '0', '\t', '\u00A0', '01', '+', '.', '\\x']) + s.slice(i + 1); }
     case 4: return s.replace(/:/g, () => pick([':', ': ', ' :\t', ':\r\n']));
     case 5: return s.replace(/(\d)(?=[,}\]])/g, (m) => m + pick(['', '', '.', 'e', '.0', 'e5']));
     case 6: return s + ' {"total": 1}';
@@ -204,9 +204,9 @@ const parseCases = Array.from({ length: 2000 }, () => {
 
 // ---------------------------------------------------------------- parseConfig
 
-const CONFIG_VALUES = ['smart', 'device_only', 'cloud_only', ' smart', 'SMART', 'yolo', '', ' ', ' ', '0', '0.5', '0.7', '1', '1.5', '-0', '-0.1', '7', '100', '100.5', '99.5',
-  '2.5', '3.5', '0.49999999999999994', '2.4999999999999996', '0x1', '0x10', '0b1', '0o7', '1e-1', '1e2', '.5', '5.', ' 0.7 ', '﻿0.6　', '0.6\u001C', 'NaN',
-  'Infinity', 'abc', '1_0', 'true', 'false', 'FALSE', ' false', 'v1', 'v2', ' v2 ', 'gemini-x', ' m ', 'toString', '__proto__'];
+const CONFIG_VALUES = ['smart', 'device_only', 'cloud_only', ' smart', 'SMART', 'yolo', '', ' ', '\u00A0', '0', '0.5', '0.7', '1', '1.5', '-0', '-0.1', '7', '100', '100.5', '99.5',
+  '2.5', '3.5', '0.49999999999999994', '2.4999999999999996', '0x1', '0x10', '0b1', '0o7', '1e-1', '1e2', '.5', '5.', ' 0.7 ', '\uFEFF0.6\u3000', '0.6\u001C', 'NaN',
+  'Infinity', 'abc', '1_0', 'true', 'false', 'FALSE', ' false', 'v1', 'v2', ' v2 ', 'gemini-x', '\u2028m\u2029', 'toString', '__proto__'];
 const CONFIG_KEYS = ['routing_mode', 'confidence_threshold', 'consent_ocr_threshold', 'total_tolerance_inr', 'max_device_line_items', 'cloud_model', 'extraction_prompt_version', 'mask_pii'];
 const configCases = Array.from({ length: 600 }, () => {
   const values: Record<string, string> = {};
@@ -226,7 +226,7 @@ const base: Extraction = { supplierName: 'Ravi Traders', supplierGstin: '29AAGCB
   taxableValue: 1500, cgst: 135, sgst: 135, igst: 0, total: 1770, confidence: 0.9 };
 const DATES = ['2026-11-02', '2026-11-20', '2026-11-21', '2026-11-22', '2023-11-20', '2023-11-19', '2023-11-21', '2026-02-30', '2024-02-29', '2025-02-29', '2026-13-01',
   '2026-00-10', '2026-11-00', '2026-11-2', '02-11-2026', '', '2026-11-02\n', '0000-01-01', '9999-12-31', '2026-04-31', '2026-12-31', '2027-01-01'];
-const POS = ['29-Karnataka', '29', ' 29 Karnataka', '27-Maharashtra', 'Karnataka', '', ' 29', '07 Delhi', '2', '٢٩', '97'];
+const POS = ['29-Karnataka', '29', ' 29 Karnataka', '27-Maharashtra', 'Karnataka', '', '\u00A029', '07 Delhi', '2', '\u0662\u0669', '97'];
 const GSTINS = ['29AAGCB7383J1Z4', '27AAPFU0939F1ZV', '07AAACR5055K1Z9', '29AAGCB7383J1Z5', '', '29aagcb7383j1z4', '27AAPFU0939F1ZV\n', '99AAPFU0939F1ZV'];
 const MONEY = [0, -0, 0.1, 0.2, 0.30000000000000004, 1, 9, 9.5, 18, 100, 118, 135, 135.5, 136, 1500, 1770, 1770.8, 1771, 1771.0000001, 1769, 270, -1, 1e-9];
 const TODAYS = ['2026-11-20T10:00:00+05:30', '2026-11-21T02:00:00+05:30', '2026-11-20T18:29:59.999Z', '2026-11-20T18:30:00Z', '2026-11-21T18:29:59.999Z',
@@ -254,7 +254,7 @@ const checksCases = Array.from({ length: 1200 }, () => {
 
 mkdirSync(OUT, { recursive: true });
 // Every non-ASCII character is written as a \u escape so the files stay plain ASCII.
-const ascii = (s: string) => s.replace(/[\u007f-￿]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+const ascii = (s: string) => s.replace(/[\u007f-\uFFFF]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
 const write = (name: string, data: unknown) => writeFileSync(resolve(OUT, name), ascii(JSON.stringify(data)) + '\n');
 write('shield.json', shieldCases);
 write('parse.json', parseCases);

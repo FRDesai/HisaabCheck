@@ -60,9 +60,9 @@ class ParseConfigTest {
         assertEquals(0.5, parseConfig(mapOf("confidence_threshold" to " .5 "), false).confidenceThreshold)
         assertEquals(1.0, parseConfig(mapOf("confidence_threshold" to "0x1"), false).confidenceThreshold)
         assertEquals(0.1, parseConfig(mapOf("confidence_threshold" to "1e-1"), false).confidenceThreshold)
-        assertEquals(0.7, parseConfig(mapOf("confidence_threshold" to " 0.7﻿"), false).confidenceThreshold)
+        assertEquals(0.7, parseConfig(mapOf("confidence_threshold" to "\u00A00.7\uFEFF"), false).confidenceThreshold)
         assertEquals(0.8, parseConfig(mapOf("confidence_threshold" to ""), false).confidenceThreshold)
-        assertEquals(0.8, parseConfig(mapOf("confidence_threshold" to " 　"), false).confidenceThreshold)
+        assertEquals(0.8, parseConfig(mapOf("confidence_threshold" to " \u3000"), false).confidenceThreshold)
         assertEquals(0.8, parseConfig(mapOf("confidence_threshold" to "0.7d"), false).confidenceThreshold)
         assertEquals(0.8, parseConfig(mapOf("confidence_threshold" to "NaN"), false).confidenceThreshold)
         assertEquals(1.0, parseConfig(mapOf("total_tolerance_inr" to "Infinity"), false).totalToleranceInr)
@@ -76,10 +76,10 @@ class ParseConfigTest {
 
     @Test
     fun textValuesAreTrimmedAndEmptyFallsBack() {
-        val c = parseConfig(mapOf("cloud_model" to "  ", "extraction_prompt_version" to " v2 "), false)
+        val c = parseConfig(mapOf("cloud_model" to " \u00A0", "extraction_prompt_version" to " v2 "), false)
         assertEquals("gemini-3.5-flash-lite", c.cloudModel)
         assertEquals("v2", c.extractionPromptVersion)
-        assertEquals("m", parseConfig(mapOf("cloud_model" to "﻿m "), false).cloudModel)
+        assertEquals("m", parseConfig(mapOf("cloud_model" to "\uFEFFm\u2028"), false).cloudModel)
     }
 
     @Test

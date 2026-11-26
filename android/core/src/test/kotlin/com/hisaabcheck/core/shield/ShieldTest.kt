@@ -65,21 +65,21 @@ class ShieldTest {
     @Test
     fun mobileSplitByNoBreakSpaceIsFound() {
         // JavaScript \s matches U+00A0; Java's \s does not.
-        val r = runShield(listOf(word("Mob:", 0), word("98450 12345", 0)), 0.6)
+        val r = runShield(listOf(word("Mob:", 0), word("98450\u00A012345", 0)), 0.6)
         assertEquals(listOf(PiiMatch(PiiType.PHONE, listOf(1))), r.matches)
         assertFalse(r.uncertain)
     }
 
     @Test
     fun everyJavaScriptWhitespaceSeparatesAMobile() {
-        val ws = "\t\n\u000B\u000C\r              " +
-            "    　﻿"
+        val ws = "\t\n\u000B\u000C\r \u00A0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A" +
+            "\u2028\u2029\u202F\u205F\u3000\uFEFF"
         for (c in ws) {
             val r = runShield(listOf(word("98450${c}12345", 0)), 0.6)
             assertEquals(listOf(PiiType.PHONE), r.matches.map { it.type }, "separator U+%04X".format(c.code))
         }
         // U+0085 and U+180E are not \s in JavaScript: the two halves are not one mobile.
-        for (c in "\u0085᠎") {
+        for (c in "\u0085\u180E") {
             val r = runShield(listOf(word("98450${c}12345", 0)), 0.6)
             assertFalse(r.matches.any { it.type == PiiType.PHONE }, "separator U+%04X".format(c.code))
         }
@@ -87,23 +87,23 @@ class ShieldTest {
 
     @Test
     fun aadhaarSplitByNoBreakSpaceIsFound() {
-        val r = runShield(listOf(word("2341 2341 2346", 0)), 0.6)
+        val r = runShield(listOf(word("2341\u00A02341\u00A02346", 0)), 0.6)
         assertEquals(listOf(PiiMatch(PiiType.AADHAAR, listOf(0))), r.matches)
     }
 
     @Test
     fun wordBoundaryIsAsciiOnly() {
         // In JavaScript \b sits between a non-ASCII letter and a digit; Unicode-aware \b (Android ICU) would not.
-        val r = runShield(listOf(word("é9845012345", 0)), 0.6)
+        val r = runShield(listOf(word("\u00E99845012345", 0)), 0.6)
         assertEquals(listOf(PiiType.PHONE), r.matches.map { it.type })
-        val p = runShield(listOf(word("éAAPFU0939Fé", 0)), 0.6)
+        val p = runShield(listOf(word("\u00E9AAPFU0939F\u00E9", 0)), 0.6)
         assertEquals(listOf(PiiType.PAN), p.matches.map { it.type })
     }
 
     @Test
     fun nonAsciiDigitsAreNotDigits() {
         // JavaScript \d is ASCII only: Arabic-Indic digits next to a mobile do not block the (?<!\d) look-behind.
-        val r = runShield(listOf(word("١9845012345١", 0)), 0.6)
+        val r = runShield(listOf(word("\u06619845012345\u0661", 0)), 0.6)
         assertEquals(listOf(PiiType.PHONE), r.matches.map { it.type })
     }
 
@@ -113,7 +113,7 @@ class ShieldTest {
         val r = runShield(listOf(word("aapfu0939f", 0)), 0.6)
         assertEquals(listOf(PiiType.PAN), r.matches.map { it.type })
         // German sharp s upper-cases to two letters in JavaScript; the spans must follow the longer text.
-        val s = runShield(listOf(word("straße", 0), word("AAPFU0939F", 0)), 0.6)
+        val s = runShield(listOf(word("stra\u00DFe", 0), word("AAPFU0939F", 0)), 0.6)
         assertEquals(listOf(PiiMatch(PiiType.PAN, listOf(1))), s.matches)
     }
 

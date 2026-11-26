@@ -65,9 +65,9 @@ class ChecksumsTest {
 
     @Test
     fun placeOfSupplySkipsJavaScriptWhitespaceOnly() {
-        assertEquals(29, placeOfSupplyCode(" 　﻿29"))
+        assertEquals(29, placeOfSupplyCode("\u00A0\u3000\uFEFF29"))
         assertNull(placeOfSupplyCode("\u008529"))
-        assertNull(placeOfSupplyCode("٢٩"))
+        assertNull(placeOfSupplyCode("\u0662\u0669"))
         assertNull(placeOfSupplyCode(null))
         assertNull(placeOfSupplyCode("x\n29"))
     }
@@ -75,7 +75,7 @@ class ChecksumsTest {
     @Test
     fun verhoeffNeedsAsciiDigits() {
         assertFalse(isValidVerhoeff(""))
-        assertFalse(isValidVerhoeff("23412341234٦"))
+        assertFalse(isValidVerhoeff("23412341234\u0666"))
         assertFalse(isValidVerhoeff("234123412346\n"))
     }
 }

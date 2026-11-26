@@ -24,6 +24,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -35,12 +38,10 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.core.content.FileProvider
 import com.hisaabcheck.app.adapters.BillSummary
 import com.hisaabcheck.app.bill.BillScreen
 import com.hisaabcheck.app.bill.BillViewModel
 import com.hisaabcheck.core.Availability
-import java.io.File
 import java.util.Locale
 
 @Composable
@@ -57,11 +58,13 @@ fun HomeScreen(vm: BillViewModel, shopName: String, onSignOut: () -> Unit) {
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { taken ->
         val uri = pendingUri
         pendingUri = null
-        if (taken && uri != null) vm.onPhoto(uri)
+        if (uri != null) { if (taken) vm.onPhoto(uri) else vm.discardCapture(uri) }
     }
     val gallery = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) vm.onPhoto(uri)
     }
+    val scope = rememberCoroutineScope()
+    val aiChecked by vm.aiChecked.collectAsState()
     val canStart = screen !is BillScreen.Processing
 
     LazyColumn(
@@ -87,7 +90,7 @@ fun HomeScreen(vm: BillViewModel, shopName: String, onSignOut: () -> Unit) {
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Text(failed.message, color = MaterialTheme.colorScheme.onErrorContainer)
-                        Button(onClick = { vm.retry() }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Try again") }
+                        Button(onClick = { vm.retry() }, modifier = Modifier.heightIn(min = 48.dp)) { Text(if (vm.canRetry) "Try again" else "Back") }
                     }
                 }
             }
@@ -96,16 +99,20 @@ fun HomeScreen(vm: BillViewModel, shopName: String, onSignOut: () -> Unit) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = {
-                        try {
-                            cameraError = false
-                            val dir = File(context.cacheDir, "captures").apply { mkdirs() }
-                            val file = File.createTempFile("bill", ".jpg", dir)
-                            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-                            pendingUri = uri
-                            camera.launch(uri)
-                        } catch (e: Exception) {
-                            pendingUri = null
-                            cameraError = true
+                        cameraError = false
+                        scope.launch {
+                            var uri: Uri? = null
+                            try {
+                                uri = vm.newCaptureUri()
+                                pendingUri = uri
+                                camera.launch(uri)
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                pendingUri = null
+                                uri?.let { vm.discardCapture(it) }
+                                cameraError = true
+                            }
                         }
                     },
                     enabled = canStart,
@@ -129,7 +136,7 @@ fun HomeScreen(vm: BillViewModel, shopName: String, onSignOut: () -> Unit) {
             Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.medium) {
                 Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = when (ai) {
+                        text = if (!aiChecked) "Checking on-device AI\u2026" else when (ai) {
                             Availability.AVAILABLE -> "On-device AI ready"
                             Availability.DOWNLOADABLE -> "On-device AI can be downloaded"
                             Availability.DOWNLOADING -> "Downloading\u2026"
@@ -138,7 +145,7 @@ fun HomeScreen(vm: BillViewModel, shopName: String, onSignOut: () -> Unit) {
                         color = MaterialTheme.colorScheme.onSecondaryContainer,
                         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                     )
-                    if (ai == Availability.DOWNLOADABLE) {
+                    if (aiChecked && ai == Availability.DOWNLOADABLE) {
                         Button(onClick = { vm.downloadModel() }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Download on-device AI") }
                     }
                     if (ai == Availability.DOWNLOADING) {

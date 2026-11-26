@@ -27,8 +27,8 @@ internal const val JS_S_OR_HYPHEN = "[\\-$JS_WS_CLASS_BODY]"
 internal const val JS_B = "(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))"
 
 internal fun isJsWhitespace(c: Char): Boolean = when (c) {
-    '\t', '\n', '\u000B', '\u000C', '\r', ' ', ' ', ' ', ' ', ' ', ' ', ' ', '　', '﻿' -> true
-    else -> c in ' '..' '
+    '\t', '\n', '\u000B', '\u000C', '\r', ' ', '\u00A0', '\u1680', '\u2028', '\u2029', '\u202F', '\u205F', '\u3000', '\uFEFF' -> true
+    else -> c in '\u2000'..'\u200A'
 }
 
 /** String.prototype.trim. Kotlin's trim() differs: it keeps U+FEFF and removes U+001C to U+001F. */

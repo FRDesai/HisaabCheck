@@ -39,7 +39,18 @@ import java.math.BigDecimal
 import java.time.Instant
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import java.io.File
+import androidx.core.content.FileProvider
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -60,6 +71,8 @@ sealed interface EditState {
     data object Idle : EditState
     data object Saving : EditState
     data object Saved : EditState
+    /** Applied on this phone and queued; the server has not answered yet. */
+    data object SavedLocally : EditState
     data class Error(val message: String) : EditState
 }
 
@@ -118,6 +131,9 @@ class BillViewModel(private val shop: Shop, app: Application) : AndroidViewModel
     val downloadProgress: StateFlow<Float?> = _downloadProgress.asStateFlow()
     private val _downloadError = MutableStateFlow(false)
     val downloadError: StateFlow<Boolean> = _downloadError.asStateFlow()
+    private val _aiChecked = MutableStateFlow(false)
+    /** False until the first on-device availability check has finished. */
+    val aiChecked: StateFlow<Boolean> = _aiChecked.asStateFlow()
     private val _info = MutableStateFlow(ResultInfo())
     val info: StateFlow<ResultInfo> = _info.asStateFlow()
 
@@ -128,6 +144,10 @@ class BillViewModel(private val shop: Shop, app: Application) : AndroidViewModel
     private var editBase: Extraction = EMPTY_EXTRACTION
     private var job: Job? = null
     private var editJob: Job? = null
+    private var editWrite: Deferred<Unit>? = null
+    private var editSeq = 0
+    // All plain fields below are touched on the main thread only.
+    private val captureLock = Mutex()
     private var consent: CompletableDeferred<ConsentResult>? = null
     private var runId = 0
     private var recentListener: ListenerRegistration? = null
@@ -139,10 +159,58 @@ class BillViewModel(private val shop: Shop, app: Application) : AndroidViewModel
             // Firebase not ready: the list stays empty.
         }
         refreshAvailability()
+        sweepCaptures()
     }
 
+    /** True when the photo that failed is in memory, so a retry re-runs that same photo. */
+    val canRetry: Boolean get() = photo != null
+
     private fun refreshAvailability() {
-        viewModelScope.launch { _aiStatus.value = device.availability() }
+        viewModelScope.launch {
+            _aiStatus.value = device.availability()
+            _aiChecked.value = true
+        }
+    }
+
+    private fun capturesDir() = File(getApplication<Application>().cacheDir, "captures")
+
+    /** Creates an empty file for the camera and returns its FileProvider URI. File work runs off the main thread. */
+    suspend fun newCaptureUri(): Uri = withContext(Dispatchers.IO) {
+        val app = getApplication<Application>()
+        val dir = capturesDir().apply { mkdirs() }
+        val file = File.createTempFile("bill", ".jpg", dir)
+        try {
+            FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", file)
+        } catch (e: Exception) {
+            file.delete()
+            throw e
+        }
+    }
+
+    /** Deletes a camera capture file of ours (no-op for other URIs). */
+    fun discardCapture(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) { deleteCaptureFile(uri) }
+    }
+
+    private fun deleteCaptureFile(uri: Uri) {
+        try {
+            val app = getApplication<Application>()
+            if (uri.authority == "${app.packageName}.fileprovider") app.contentResolver.delete(uri, null, null)
+        } catch (e: Exception) {
+            // best effort
+        }
+    }
+
+    /** Deletes every file in the captures folder, unless a capture is being loaded right now. */
+    private fun sweepCaptures() {
+        viewModelScope.launch(Dispatchers.IO) {
+            if (!captureLock.tryLock()) return@launch
+            try {
+                capturesDir().listFiles()?.forEach { it.delete() }
+            } finally {
+                captureLock.unlock()
+            }
+        }
     }
 
     fun downloadModel() {
@@ -164,16 +232,28 @@ class BillViewModel(private val shop: Shop, app: Application) : AndroidViewModel
     }
 
     fun onPhoto(uri: Uri) {
-        if (job?.isActive == true) return
+        if (job?.isActive == true) {
+            discardCapture(uri)
+            return
+        }
         val id = ++runId
+        // A new photo starts from nothing: no earlier photo, bill id or result state can leak into it.
+        photo = null
+        billId = null
+        config = null
+        editBase = EMPTY_EXTRACTION
+        editJob?.cancel()
+        editWrite?.cancel()
+        _info.value = ResultInfo()
         _screen.value = BillScreen.Processing(Step.AVAILABILITY)
         job = viewModelScope.launch {
             try {
                 val img = try {
-                    ImageLoader.load(getApplication(), uri)
+                    captureLock.withLock { ImageLoader.load(getApplication(), uri) }
                 } finally {
-                    discardCameraFile(uri)
+                    withContext(NonCancellable) { withContext(Dispatchers.IO) { deleteCaptureFile(uri) } }
                 }
+                guard(id)
                 photo = img
                 billId = null
                 cascade(img, id)
@@ -183,6 +263,11 @@ class BillViewModel(private val shop: Shop, app: Application) : AndroidViewModel
                 fail(id, photo != null)
             }
         }
+    }
+
+    private suspend fun guard(id: Int) {
+        currentCoroutineContext().ensureActive()
+        if (id != runId) throw CancellationException("stale run")
     }
 
     /** Re-runs the cascade for the same photo and saves under the same bill id. */
@@ -207,37 +292,52 @@ class BillViewModel(private val shop: Shop, app: Application) : AndroidViewModel
         }
     }
 
-    private fun fail(id: Int, canRetry: Boolean) {
+    private fun fail(id: Int, canRetry: Boolean, message: String? = null) {
         if (id != runId) return
         _screen.value = BillScreen.Failed(
-            if (canRetry) "Something went wrong while reading this bill. Your photo is still here, so you can try again."
+            message ?: if (canRetry) "Something went wrong while reading this bill. Your photo is still here, so you can try again."
             else "We could not open that photo. Please try again with another one.",
         )
     }
 
     private suspend fun cascade(img: ImageInput, id: Int) {
         val cfg = RemoteConfigSource(isProd).load()
+        guard(id)
         config = cfg
         val deps = RouterDeps(device, cloud, ocr, painter, cfg, Clock { Instant.now() })
         val hooks = object : RouterHooks {
             override fun onStep(step: Step) {
-                if (id == runId) _screen.value = BillScreen.Processing(step)
-            }
-
-            override suspend fun askConsent(redacted: ByteArray, plan: RedactionPlan): ConsentResult {
-                val waiting = CompletableDeferred<ConsentResult>()
-                consent = waiting
-                _screen.value = BillScreen.Preview(redacted, plan)
-                try {
-                    return waiting.await()
-                } finally {
-                    if (consent === waiting) consent = null
+                // Confined to the main thread, where runId and the screen are read.
+                viewModelScope.launch(Dispatchers.Main.immediate) {
+                    if (id == runId && _screen.value !is BillScreen.Preview) _screen.value = BillScreen.Processing(step)
                 }
             }
+
+            override suspend fun askConsent(redacted: ByteArray, plan: RedactionPlan): ConsentResult =
+                withContext(Dispatchers.Main.immediate) {
+                    guard(id)
+                    val waiting = CompletableDeferred<ConsentResult>()
+                    consent = waiting
+                    _screen.value = BillScreen.Preview(redacted, plan)
+                    try {
+                        waiting.await()
+                    } finally {
+                        if (consent === waiting) consent = null
+                    }
+                }
         }
         val result = processBill(img, deps, hooks)
+        // An abandoned run must write nothing: no save, no state.
+        guard(id)
         // Saved before the result screen is shown, so a captured bill is never lost. Only the redacted image is stored.
-        val saved = store.save(shop, result, billId)
+        val saved = try {
+            store.save(shop, result, billId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            fail(id, true, "The bill was read but could not be saved. Check your connection and try again.")
+            return
+        }
         billId = saved.billId
         editBase = result.extraction ?: EMPTY_EXTRACTION
         _info.value = ResultInfo(
@@ -292,26 +392,54 @@ class BillViewModel(private val shop: Shop, app: Application) : AndroidViewModel
             taxableValue = amounts.getValue("taxableValue"), cgst = amounts.getValue("cgst"), sgst = amounts.getValue("sgst"),
             igst = amounts.getValue("igst"), total = amounts.getValue("total"),
         )
+        // Nothing changed since the last applied save: do nothing.
+        val cur = _info.value
+        if (value == editBase && (cur.edit == EditState.Saved || cur.edit == EditState.SavedLocally)) return
         val run = runId
-        _info.value = _info.value.copy(text = fields, invalid = emptySet(), edit = EditState.Saving)
+        val seq = ++editSeq
+        _info.value = cur.copy(text = fields, invalid = emptySet(), edit = EditState.Saving)
+        val checks = try {
+            runChecks(value, config ?: parseConfig(emptyMap(), isProd), Instant.now()).checks
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            _info.value = _info.value.copy(edit = EditState.Error(CONNECTION_MESSAGE))
+            return
+        }
+        // The write lives in viewModelScope (a supervisor), so waiting for it can time out without cancelling it.
+        val write = viewModelScope.async { store.updateFields(shop.id, id, value, checks) }
+        editWrite = write
+        fun current() = run == runId && seq == editSeq
+        fun applyLocally(edit: EditState) {
+            editBase = value
+            _info.value = _info.value.copy(checks = checks, text = toFormText(value), edit = edit)
+        }
+        fun failure(e: Exception) {
+            val denied = e is FirebaseFirestoreException && e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED
+            val msg = when {
+                !denied -> CONNECTION_MESSAGE
+                _info.value.sync != SyncState.FAILED -> REVIEWED_MESSAGE
+                else -> NOT_SAVED_MESSAGE
+            }
+            _info.value = _info.value.copy(edit = EditState.Error(msg))
+        }
         editJob = viewModelScope.launch {
             try {
-                val checks = runChecks(value, config ?: parseConfig(emptyMap(), isProd), Instant.now()).checks
-                // An offline write is queued and never acknowledged, so stop waiting after a while.
-                val done = withTimeoutOrNull(15_000) { store.updateFields(shop.id, id, value, checks); true }
-                if (run != runId) return@launch
-                if (done == true) {
-                    editBase = value
-                    _info.value = _info.value.copy(checks = checks, text = toFormText(value), edit = EditState.Saved)
+                // An offline write is queued and not acknowledged until the server answers.
+                val answered = withTimeoutOrNull(15_000) { write.await(); true }
+                if (!current()) return@launch
+                if (answered == true) {
+                    applyLocally(EditState.Saved)
                 } else {
-                    _info.value = _info.value.copy(edit = EditState.Error(CONNECTION_MESSAGE))
+                    // Firestore has applied the edit on this phone; keep listening for the server's answer.
+                    applyLocally(EditState.SavedLocally)
+                    write.await()
+                    if (current()) _info.value = _info.value.copy(edit = EditState.Saved)
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (run != runId) return@launch
-                val denied = e is FirebaseFirestoreException && e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED
-                _info.value = _info.value.copy(edit = EditState.Error(if (denied) REVIEWED_MESSAGE else CONNECTION_MESSAGE))
+                if (current()) failure(e)
             }
         }
     }
@@ -321,9 +449,11 @@ class BillViewModel(private val shop: Shop, app: Application) : AndroidViewModel
         runId++
         job?.cancel()
         editJob?.cancel()
+        editWrite?.cancel()
         consent?.cancel()
         job = null
         editJob = null
+        editWrite = null
         consent = null
         photo = null
         billId = null
@@ -332,26 +462,18 @@ class BillViewModel(private val shop: Shop, app: Application) : AndroidViewModel
         _info.value = ResultInfo()
         _screen.value = BillScreen.Home
         refreshAvailability()
+        sweepCaptures()
     }
 
     override fun onCleared() {
         job?.cancel()
         editJob?.cancel()
+        editWrite?.cancel()
         consent?.cancel()
         consent = null
         photo = null
         recentListener?.remove()
         recentListener = null
-    }
-
-    /** A camera capture is a temporary file of ours: remove it once it has been read. */
-    private fun discardCameraFile(uri: Uri) {
-        try {
-            val app = getApplication<Application>()
-            if (uri.authority == "${app.packageName}.fileprovider") app.contentResolver.delete(uri, null, null)
-        } catch (e: Exception) {
-            // best effort
-        }
     }
 
     class Factory(private val shop: Shop, private val app: Application) : ViewModelProvider.Factory {
@@ -361,6 +483,7 @@ class BillViewModel(private val shop: Shop, app: Application) : AndroidViewModel
 
     private companion object {
         const val CONNECTION_MESSAGE = "Could not save your changes. Check your connection and try again."
+        const val NOT_SAVED_MESSAGE = "Not saved - the server refused this bill."
         const val REVIEWED_MESSAGE = "Your CA has already reviewed this bill, so it can no longer be changed here."
     }
 }

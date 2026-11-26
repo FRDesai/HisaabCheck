@@ -70,13 +70,15 @@ private val BoxListSaver: Saver<SnapshotStateList<ImgBox>, Any> = Saver(
 /** Shows ONLY the redacted image. Extra boxes are painted onto that redacted image; the original is never available here. */
 @Composable
 fun PreviewScreen(redacted: ByteArray, onSend: (ByteArray) -> Unit, onKeep: () -> Unit) {
-    val decoded by produceState<Decoded?>(null, redacted) {
-        value = withContext(Dispatchers.Default) {
+    val loaded by produceState<Pair<Boolean, Decoded?>>(false to null, redacted) {
+        value = true to withContext(Dispatchers.Default) {
             val bmp = BitmapFactory.decodeByteArray(redacted, 0, redacted.size)
             bmp?.let { Decoded(it.asImageBitmap(), it.width, it.height) }
         }
     }
-    val boxes = rememberSaveable(saver = BoxListSaver) { mutableStateListOf<ImgBox>() }
+    val decoded = loaded.second
+    // Keyed on the image, so a second preview can never inherit the first one's boxes.
+    val boxes = rememberSaveable(redacted, saver = BoxListSaver, key = "boxes-${redacted.size}-${redacted.contentHashCode()}") { mutableStateListOf<ImgBox>() }
     var drag by remember { mutableStateOf<ImgBox?>(null) }
     var shown by remember { mutableStateOf(IntSize.Zero) }
     var busy by remember { mutableStateOf(false) }
@@ -97,7 +99,7 @@ fun PreviewScreen(redacted: ByteArray, onSend: (ByteArray) -> Unit, onKeep: () -
         )
         val d = decoded
         if (d == null) {
-            Text("Loading the image\u2026")
+            Text(if (loaded.first) "This image could not be shown." else "Loading the image\u2026")
         } else {
             fun toImage(p: Offset): Offset {
                 val sw = shown.width.coerceAtLeast(1).toFloat()

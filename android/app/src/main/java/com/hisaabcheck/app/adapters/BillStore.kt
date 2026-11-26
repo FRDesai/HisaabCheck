@@ -15,6 +15,7 @@ import com.hisaabcheck.core.Checks
 import com.hisaabcheck.core.Extraction
 import com.hisaabcheck.core.ProcessedBill
 import com.hisaabcheck.core.router.toRouteLogFields
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellationException
@@ -39,6 +40,15 @@ class BillStore {
     private val storage get() = Firebase.storage
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    private companion object {
+        /**
+         * The newest save attempt per bill id, for attempts whose photo upload has not finished. In memory only: an
+         * upload does not survive the process, so after a process death no earlier attempt can still link its photo.
+         */
+        val latestAttempt = ConcurrentHashMap<String, Any>()
+        val attemptLock = Any()
+    }
+
     fun save(shop: Shop, bill: ProcessedBill, billId: String? = null): SavedBill {
         val bills = db.collection("shops").document(shop.id).collection("bills")
         val billRef: DocumentReference = if (billId != null) bills.document(billId) else bills.document()
@@ -56,8 +66,15 @@ class BillStore {
         )
         doc["createdAt"] = FieldValue.serverTimestamp()
 
-        // Bill first. The offline cache queues it; the task completes only on server acknowledgement or refusal.
-        val billTask = billRef.set(doc)
+        // This save is now the bill's newest attempt; any earlier attempt's upload still running is superseded. Marking
+        // it and queueing the write happen under one lock, so a superseded upload's imagePath write is either queued
+        // before this set (which then clears it) or not made at all. Firestore applies one client's writes in order.
+        val attempt = Any()
+        val billTask = synchronized(attemptLock) {
+            latestAttempt[billRef.id] = attempt
+            // Bill first. The offline cache queues it; the task completes only on server acknowledgement or refusal.
+            billRef.set(doc)
+        }
         val synced = scope.async { try { billTask.awaitTask(); true } catch (e: CancellationException) { throw e } catch (e: Exception) { false } }
 
         // Route log is best-effort telemetry (counts and types only) and never affects the bill.
@@ -76,15 +93,27 @@ class BillStore {
                 try {
                     val meta = StorageMetadata.Builder().setContentType("image/jpeg").build()
                     storage.reference.child(imagePath).putBytes(image, meta).awaitTask()
-                    billRef.update("imagePath", imagePath).awaitTask()
+                    // Only the newest attempt may link its photo. A superseded upload stays in Storage, unreferenced,
+                    // and is reported as not stored: no photo is better than one without the owner's later boxes.
+                    val link = synchronized(attemptLock) {
+                        if (latestAttempt[billRef.id] === attempt) billRef.update("imagePath", imagePath) else null
+                    } ?: return@async PhotoResult.FAILED
+                    link.awaitTask()
                     PhotoResult.STORED
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     PhotoResult.FAILED
+                } finally {
+                    // Forget the bill once its newest attempt has finished, so the map does not grow across bills.
+                    latestAttempt.remove(billRef.id, attempt)
                 }
             }
-        } else CompletableDeferred(PhotoResult.SKIPPED)
+        } else {
+            // No photo with this attempt: nothing to wait for, and any earlier upload is already superseded.
+            latestAttempt.remove(billRef.id, attempt)
+            CompletableDeferred(PhotoResult.SKIPPED)
+        }
 
         return SavedBill(billRef.id, synced, photo)
     }

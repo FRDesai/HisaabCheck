@@ -36,7 +36,7 @@ Set-up for all of these is in the README section "Android app".
 16. **Storage overwrite behaviour in production.** Check whether a CA's replacement of a stored photo is judged as an update or a create by the real Storage service (the rules are written to pass either way), and that an owner cannot overwrite a stored photo.
 17. **App Check enforcement.** Turn on App Check enforcement for Firestore and Storage in the console (it is a deploy-time setting, not in the rules), then repeat steps 3 to 9 with it on.
 18. **Camera photo sizes.** Check the stored JPEG stays under the 3 MB Storage rule (the image is scaled to at most 1600 px on the longest side).
-19. **Retry cloud and the stored photo.** In a shop that stores photos, make the cloud read fail (for example offline after the preview), tap "Retry cloud", black out one more number in the second preview and send. Then open the bill as the CA on the web and check the photo shown is the second one, with the extra box.
+19. **Retry cloud and the stored photo.** In a shop that stores photos, make the cloud read fail (for example offline after the preview), tap "Retry cloud", black out one more number in the second preview and send. Then open the bill as the CA on the web and check the photo shown is the second one, with the extra box. Repeat on a slow connection so the first upload is still running when the second is sent.
 20. **Screens on Android 15 or later.** On every screen, check nothing is drawn under the status bar, the navigation bar or a display cutout, that the last button of each scrolling screen can be reached, and that the keyboard does not cover the field being typed in (sign-in, link and the result screen), with no doubled gap above the keyboard.
 
 ## Decisions made during the build
@@ -48,7 +48,7 @@ Set-up for all of these is in the README section "Android app".
 - The owner can create bills, and can edit bills that are draft or manual entry. Owners cannot change a reviewed bill, and cannot approve, reject, reopen or delete. An owner's bill never carries review fields.
 - Storage: the shop's CA or its linked owner can read; the owner can only add a photo where none exists; replacing and deleting are the CA's.
 - On Android, masking cannot be turned off in any build: the app always reads Remote Config with masking forced on, so a `mask_pii` of `false` in the console has no effect there (the installable APK is a debug build). On the web it is forced on in production builds.
-- Each save stores its photo under a new name, `shops/{shopId}/bills/{billId}-{suffix}.jpg` (the suffix is the time in milliseconds in base 36), and `imagePath` points to that name. A retry therefore never depends on or falls back to an earlier attempt's photo; an upload or `imagePath` failure shows "Photo not stored".
+- Each save stores its photo under a new name, `shops/{shopId}/bills/{billId}-{suffix}.jpg` (the suffix is the time in milliseconds in base 36), and `imagePath` points to that name. A retry never depends on or falls back to an earlier attempt's photo, and only the newest attempt for a bill may write `imagePath`: an earlier attempt's upload that finishes late (for example on a poor connection) is not linked and reports "Photo not stored", as does a failed upload or `imagePath` write. Marking the newest attempt and queueing its bill write happen under one lock, so a late link is either queued before the newer full write (which clears it) or not made. This state is in memory only; an upload does not survive a process death.
 - Android route logs are written by the shop's linked owner, with `platform` `android` and the shop's `caUid`, so the log shows on that CA's dashboard.
 - `compileSdk` is 37.1 (the Compose version in use needs it), so the platform package `android-37.1` must be installed on any build machine. Lifecycle 2.11.1 and coroutines 1.11.0 were used. The Gradle 9.6.0 zip was fetched with `curl` because Java could not reach the download host.
 - Gradle runs only through `android/gw`, which lets one build run at a time (repo-local lock `android/.gradle/gw.lock`, with takeover of a lock left by a dead process). It adds `--console=plain` itself.
@@ -144,7 +144,7 @@ Screens
 - If the session ends during a configuration change, the bill view model keeps its photo until the activity is destroyed.
 - Firestore's local cache is not cleared on sign-out, which matters if two owners share a phone.
 - The shop's settings (such as "store images") are cached for the session.
-- After "Retry cloud", the earlier attempt's stored photo stays in Storage, unreferenced; owners cannot delete, so cleanup is the CA's side.
+- After "Retry cloud", the earlier attempt's stored photo (including one whose upload finished late and was not linked) stays in Storage, unreferenced; owners cannot delete, so cleanup is the CA's side.
 - "Retry cloud" stays available after the owner has saved edits, and its save still overwrites those edits.
 - Consent wording (both platforms, owner's decision pending): "Data is kept in India (Mumbai)" is not something the code guarantees for the cloud read through the Gemini Developer API.
 

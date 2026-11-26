@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { Navigate } from 'react-router-dom';
-import { auth } from '../../firebase';
+import { auth, USE_EMULATORS } from '../../firebase';
 import { useAuth } from './AuthProvider';
+// Dev-only test sign-in for the local emulators; `import.meta.env.DEV` is false in a production build, so it is not bundled.
+const DevSignIn = import.meta.env.DEV && USE_EMULATORS ? lazy(() => import('../../dev/DevSignIn')) : null;
 
 export default function LoginPage() {
   const { user } = useAuth();
@@ -22,6 +24,7 @@ export default function LoginPage() {
           Sign in with Google
         </button>
         {error && <p role="alert" className="text-red-700 text-sm">{error}</p>}
+        {DevSignIn && <Suspense fallback={null}><DevSignIn /></Suspense>}
       </div>
     </main>
   );

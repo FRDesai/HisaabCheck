@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:emulators": "cd ../firebase && firebase emulators:exec --only auth,firestore,storage --project demo-hisaabcheck \"cd ../web && VITE_USE_EMULATORS=true vite --port 5173 --strictPort\"",
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "test:watch": "vitest",

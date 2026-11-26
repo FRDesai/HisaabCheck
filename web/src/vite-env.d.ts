@@ -9,6 +9,7 @@ interface ImportMetaEnv {
   readonly VITE_FIREBASE_APP_ID: string;
   readonly VITE_RECAPTCHA_ENTERPRISE_SITE_KEY: string;
   readonly VITE_APPCHECK_DEBUG?: string;
+  readonly VITE_USE_EMULATORS?: string; // dev only: 'true' connects to the local emulators (npm run dev:emulators)
 }
 interface ImportMeta {
   readonly env: ImportMetaEnv;

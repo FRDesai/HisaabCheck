@@ -118,6 +118,9 @@ Defaults are in `web/src/core/config/defaults.ts` and `firebase/remoteconfig.tem
 
 **Run locally:** `cd web && npm install && npm run dev`.
 
+**Run locally without a Firebase project (emulator mode):** `cd web && npm run dev:emulators` (needs Java on the PATH). It starts the Auth, Firestore and Storage emulators with this repo's rules under the project id `demo-hisaabcheck`, then the dev server on port 5173 with `VITE_USE_EMULATORS=true`; no `.env.local` is needed. The login page then shows "Sign in as test CA" buttons, App Check is skipped, and stopping the dev server (Ctrl+C) stops the emulators. It exists only in development builds (`web/src/core/config/emulatorMode.ts`); a production build leaves it out.
+Remote Config and the AI calls cannot be emulated: the app runs on the bundled config defaults, every cloud read fails and those bills are saved for manual entry. Use it to try sign-in, shops, upload, OCR, redaction, review, export and the rules; it does not replace the checks against the real Firebase project.
+
 **Deploy.** From `firebase/`, log in with the Firebase CLI and deploy rules, indexes and Remote Config:
 
 ```

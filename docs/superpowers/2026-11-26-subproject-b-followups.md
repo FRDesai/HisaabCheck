@@ -54,3 +54,7 @@ Rules tests need Java on PATH: `PATH=/opt/homebrew/opt/openjdk/bin:$PATH npm run
 - Hand-seeded bills need `status` and `createdAt` to show in the inbox.
 - No stable voucher id, so importing the same Tally file twice books the bills twice.
 - Photo download URLs are bearer URLs: anyone holding one can open the photo.
+- The first bill-list snapshot on the review screen can come from a partial local cache, so "All bills reviewed." could show early.
+- No rules test covers a legacy bill stored without a `status`.
+- The inbox "Failed checks" filter and its count do not include a taxable value that does not add up; such a bill still sits under "To review".
+- A negative stored taxable value is silently replaced by total minus tax in both exports.

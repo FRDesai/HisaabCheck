@@ -20,10 +20,14 @@ export default function ShopsPage() {
     return () => { alive = false; };
   }, [shopIds]);
   const [inviteError, setInviteError] = useState<Record<string, string>>({});
+  const [inviteBusy, setInviteBusy] = useState<Record<string, boolean>>({});
   async function invite(s: Shop) {
+    if (inviteBusy[s.id]) return;
+    setInviteBusy((b) => ({ ...b, [s.id]: true }));
     setInviteError((e) => ({ ...e, [s.id]: '' }));
     try { await createInvite(s, user!.uid); }
     catch { setInviteError((e) => ({ ...e, [s.id]: 'Could not create the invite code. Please try again.' })); }
+    finally { setInviteBusy((b) => ({ ...b, [s.id]: false })); }
   }
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,8 +61,10 @@ export default function ShopsPage() {
                     <div>
                       <span id={`invite-${s.id}`} className="text-slate-600">Invite code for the owner's phone</span>
                       <div aria-labelledby={`invite-${s.id}`} role="group" className="mt-1 inline-block ml-2 px-3 py-1 rounded border bg-slate-50 font-mono text-base tracking-widest select-all">{s.inviteCode}</div>
+                      <p className="text-slate-600 mt-1">This code works for 7 days.</p>
+                      <button type="button" disabled={inviteBusy[s.id]} onClick={() => void invite(s)} className="mt-1 px-3 py-1.5 rounded border hover:border-emerald-600 disabled:opacity-60">New code</button>
                     </div>
-                  ) : <button type="button" onClick={() => void invite(s)} className="px-3 py-1.5 rounded border hover:border-emerald-600">Invite owner</button>}
+                  ) : <button type="button" disabled={inviteBusy[s.id]} onClick={() => void invite(s)} className="px-3 py-1.5 rounded border hover:border-emerald-600 disabled:opacity-60">Invite owner</button>}
                 {inviteError[s.id] && <p role="alert" className="text-red-700 mt-1">{inviteError[s.id]}</p>}
               </div>
             </li>

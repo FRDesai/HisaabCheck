@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest';
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc, updateDoc, deleteDoc, collection, query, where, getDocs, orderBy, limit, serverTimestamp, deleteField } from 'firebase/firestore';
+import { doc, documentId, getDoc, setDoc, updateDoc, deleteDoc, collection, query, where, getDocs, orderBy, limit, serverTimestamp, deleteField } from 'firebase/firestore';
 
 let env: RulesTestEnvironment;
 // Matches what store.ts writes: server time, a shop the writer owns.
@@ -211,7 +211,7 @@ describe('shop owners and invites', () => {
     await env.withSecurityRulesDisabled(async (c) => {
       const f = c.firestore();
       await setDoc(doc(f, 'shops/s1'), { caUid: 'alice', shopName: 'A', gstin: '', state: '', storeImages: false, inviteCode: CODE });
-      await setDoc(doc(f, `invites/${CODE}`), { shopId: 's1', caUid: 'alice' });
+      await setDoc(doc(f, `invites/${CODE}`), { shopId: 's1', caUid: 'alice', createdAt: new Date() });
       await setDoc(doc(f, 'shops/linked'), { caUid: 'alice', shopName: 'L', gstin: '', state: '', storeImages: true, ownerUid: 'ravi', inviteCode: 'WXYZ6789' });
       await setDoc(doc(f, 'shops/linked/bills/draft1'), { status: 'draft', total: 118 });
       await setDoc(doc(f, 'shops/linked/bills/appr1'), { status: 'approved', total: 118, reviewedBy: 'alice', reviewedAt: new Date('2026-11-01') });
@@ -404,5 +404,105 @@ describe('shop owners and invites', () => {
       await assertFails(getDoc(doc(as('ravi'), 'routeLogs/a10')));
       await assertFails(getDocs(collection(as('ravi'), 'routeLogs')));
     });
+  });
+});
+
+describe('fix round 1: consent, expiry and review keys', () => {
+  const CODE = 'ABCD2345';
+  const s1 = (uid: string) => doc(as(uid), 'shops/s1');
+  const rv = { reviewedBy: 'alice', reviewedAt: new Date('2020-01-01') };
+  beforeEach(async () => {
+    await env.withSecurityRulesDisabled(async (c) => {
+      const f = c.firestore();
+      await setDoc(doc(f, 'shops/s1'), { caUid: 'alice', shopName: 'A', gstin: '', state: '', storeImages: false, inviteCode: CODE });
+      await setDoc(doc(f, `invites/${CODE}`), { shopId: 's1', caUid: 'alice', createdAt: new Date() });
+      await setDoc(doc(f, 'invites/OLDD2345'), { shopId: 's1', caUid: 'alice', createdAt: new Date(Date.now() - 8 * 86400000) });
+      await setDoc(doc(f, 'invites/OTHR2345'), { shopId: 'bobshop', caUid: 'bob', createdAt: new Date() });
+      await setDoc(doc(f, 'shops/linked'), { caUid: 'alice', shopName: 'L', gstin: '', state: '', storeImages: true, ownerUid: 'ravi', claimedWith: 'WXYZ6789', inviteCode: 'WXYZ6789' });
+      await setDoc(doc(f, 'shops/linked/bills/rej1'), { status: 'rejected', total: 1, reviewedBy: 'alice', reviewedAt: new Date('2026-11-01'), rejectNote: 'x' });
+      await setDoc(doc(f, 'shops/linked/bills/draft1'), { status: 'draft', total: 118 });
+    });
+  });
+
+  it('a shop cannot be created with an owner or a claim', async () => {
+    const base = { caUid: 'mallory', shopName: 'X', gstin: '', state: '', storeImages: false };
+    await assertSucceeds(setDoc(doc(as('mallory'), 'shops/m1'), base));
+    await assertFails(setDoc(doc(as('mallory'), 'shops/m2'), { ...base, ownerUid: 'victim' }));
+    await assertFails(setDoc(doc(as('mallory'), 'shops/m3'), { ...base, claimedWith: 'ABCD2345' }));
+  });
+  it('the CA cannot set or change an owner', async () => {
+    await assertFails(updateDoc(s1('alice'), { ownerUid: 'victim' }));
+    await assertFails(updateDoc(s1('alice'), { ownerUid: 'victim', claimedWith: CODE }));
+    await assertFails(updateDoc(doc(as('alice'), 'shops/linked'), { ownerUid: 'victim' }));
+    await assertFails(updateDoc(doc(as('alice'), 'shops/linked'), { claimedWith: 'AAAA2222' }));
+    await assertSucceeds(updateDoc(doc(as('alice'), 'shops/linked'), { shopName: 'Renamed' }));
+  });
+  it('the CA unlinks only by also removing or rotating the invite code', async () => {
+    const l = doc(as('alice'), 'shops/linked');
+    await assertFails(updateDoc(l, { ownerUid: deleteField(), claimedWith: deleteField() }));
+    await assertFails(updateDoc(l, { ownerUid: deleteField() }));
+    await assertSucceeds(updateDoc(l, { ownerUid: deleteField(), claimedWith: deleteField(), inviteCode: deleteField() }));
+  });
+  it('the CA unlinks with a rotated code, and the old code cannot link again', async () => {
+    const l = doc(as('alice'), 'shops/linked');
+    await assertSucceeds(updateDoc(l, { ownerUid: deleteField(), claimedWith: deleteField(), inviteCode: 'NEWW2345' }));
+    await env.withSecurityRulesDisabled(async (c) => {
+      await setDoc(doc(c.firestore(), 'invites/WXYZ6789'), { shopId: 'linked', caUid: 'alice', createdAt: new Date() });
+    });
+    await assertFails(updateDoc(doc(as('ravi2'), 'shops/linked'), { ownerUid: 'ravi2', claimedWith: 'WXYZ6789' }));
+  });
+  it('an unlink on a shop with no code to change is refused', async () => {
+    await assertFails(updateDoc(doc(as('alice'), 'shops/noinv'), { ownerUid: deleteField() }));
+  });
+
+  it('linking needs an invite for this shop, no older than 7 days', async () => {
+    await assertSucceeds(updateDoc(s1('ravi2'), { ownerUid: 'ravi2', claimedWith: CODE }));
+  });
+  it('refuses an invite that points at another shop', async () => {
+    await env.withSecurityRulesDisabled(async (c) => { await updateDoc(doc(c.firestore(), 'shops/s1'), { inviteCode: 'OTHR2345' }); });
+    await assertFails(updateDoc(s1('ravi2'), { ownerUid: 'ravi2', claimedWith: 'OTHR2345' }));
+  });
+  it('refuses an invite older than 7 days', async () => {
+    await env.withSecurityRulesDisabled(async (c) => { await updateDoc(doc(c.firestore(), 'shops/s1'), { inviteCode: 'OLDD2345' }); });
+    await assertFails(updateDoc(s1('ravi2'), { ownerUid: 'ravi2', claimedWith: 'OLDD2345' }));
+  });
+  it('refuses a code with no invite document', async () => {
+    await env.withSecurityRulesDisabled(async (c) => { await updateDoc(doc(c.firestore(), 'shops/s1'), { inviteCode: 'NONE2345' }); });
+    await assertFails(updateDoc(s1('ravi2'), { ownerUid: 'ravi2', claimedWith: 'NONE2345' }));
+  });
+
+  it('an owner bill cannot carry review fields, on create or update', async () => {
+    const b = (id: string) => doc(as('ravi'), `shops/linked/bills/${id}`);
+    await assertFails(setDoc(b('n1'), { status: 'draft', total: 1, ...rv }));
+    await assertFails(setDoc(b('n2'), { status: 'draft', total: 1, rejectNote: 'x' }));
+    await assertFails(setDoc(b('n3'), { status: 'draft', total: 1, approvedWithFailedChecks: ['gstin'] }));
+    await assertFails(updateDoc(b('draft1'), { reviewedAt: new Date('2020-01-01') }));
+    await assertFails(updateDoc(b('draft1'), { reviewedBy: 'ravi' }));
+    await assertFails(updateDoc(b('draft1'), { rejectNote: 'x' }));
+    await assertSucceeds(updateDoc(b('draft1'), { total: 5 }));
+  });
+  it('the owner cannot change a rejected bill', async () => {
+    const r = doc(as('ravi'), 'shops/linked/bills/rej1');
+    await assertFails(updateDoc(r, { total: 9 }));
+    await assertFails(updateDoc(r, { status: 'draft', reviewedBy: deleteField(), reviewedAt: deleteField(), rejectNote: deleteField() }));
+    await assertFails(updateDoc(r, { imagePath: 'x' }));
+  });
+  it('the owner cannot create an invite', async () => {
+    await assertFails(setDoc(doc(as('ravi'), 'invites/QRSTUV23'), { shopId: 'linked', caUid: 'ravi', createdAt: serverTimestamp() }));
+    await assertFails(setDoc(doc(as('ravi'), 'invites/QRSTUV24'), { shopId: 'linked', caUid: 'alice', createdAt: serverTimestamp() }));
+  });
+  it('an id query on invites is denied; another CA cannot overwrite an invite', async () => {
+    await assertFails(getDocs(query(collection(as('ravi2'), 'invites'), where(documentId(), '==', CODE))));
+    await assertFails(setDoc(doc(as('bob'), `invites/${CODE}`), { shopId: 'bobshop', caUid: 'bob', createdAt: serverTimestamp() }));
+    await assertFails(setDoc(doc(as('alice'), `invites/${CODE}`), { shopId: 's1', caUid: 'alice', createdAt: serverTimestamp() }));
+  });
+  it('a stranger\'s full overwrite of a shop with link fields is denied', async () => {
+    await assertFails(setDoc(s1('ravi2'), { caUid: 'alice', shopName: 'Hacked', gstin: '', state: '', storeImages: false, inviteCode: CODE, ownerUid: 'ravi2', claimedWith: CODE }));
+    await assertFails(setDoc(s1('ravi2'), { caUid: 'ravi2', shopName: 'A', ownerUid: 'ravi2', claimedWith: CODE }));
+  });
+  it('another CA cannot read a linked shop or its bills', async () => {
+    await assertFails(getDoc(doc(as('bob'), 'shops/linked')));
+    await assertFails(getDoc(doc(as('bob'), 'shops/linked/bills/draft1')));
+    await assertFails(getDocs(collection(as('bob'), 'shops/linked/bills')));
   });
 });

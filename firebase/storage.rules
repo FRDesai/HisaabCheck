@@ -3,16 +3,20 @@ service firebase.storage {
   match /b/{bucket}/o {
     match /shops/{shopId}/bills/{file} {
       function shop() { return firestore.get(/databases/(default)/documents/shops/$(shopId)).data; }
-      // The shop's CA and its linked owner may read and add photos; only the CA deletes.
+      // The shop's CA and its linked owner may read and add new photos; only the CA replaces or deletes.
       function isCaOrOwner() {
         return request.auth != null
           && (shop().caUid == request.auth.uid || shop().get('ownerUid', null) == request.auth.uid);
       }
+      function validImage() {
+        return shop().storeImages == true
+          && request.resource.size < 3 * 1024 * 1024 && request.resource.contentType == 'image/jpeg';
+      }
       allow read: if isCaOrOwner();
       allow delete: if request.auth != null && shop().caUid == request.auth.uid;
-      allow create, update: if isCaOrOwner()
-        && shop().storeImages == true
-        && request.resource.size < 3 * 1024 * 1024 && request.resource.contentType == 'image/jpeg';
+      // The owner may only add a new object; replacing a stored photo (of a bill that may since have been reviewed) is the CA's.
+      allow create: if resource == null && isCaOrOwner() && validImage();
+      allow update: if request.auth != null && shop().caUid == request.auth.uid && validImage();
     }
   }
 }

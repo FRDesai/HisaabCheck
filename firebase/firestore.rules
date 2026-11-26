@@ -42,6 +42,11 @@ service cloud.firestore {
             && changed.hasOnly(['status', 'reviewedBy', 'reviewedAt', 'rejectNote', 'approvedWithFailedChecks']));
     }
 
+    // An owner's bill never carries review fields (a back-dated review time, a note, a failed-check list).
+    function noReviewKeys(d) {
+      return !d.keys().hasAny(['reviewedBy', 'reviewedAt', 'rejectNote', 'approvedWithFailedChecks']);
+    }
+
     match /users/{userId} {
       allow read: if signedIn() && (uid() == userId || isAdmin());
       allow create: if signedIn() && uid() == userId && request.resource.data.role in ['ca', 'owner'];
@@ -51,26 +56,38 @@ service cloud.firestore {
     match /shops/{shopId} {
       allow read: if signedIn() && (resource.data.get('caUid', null) == uid() || resource.data.get('ownerUid', null) == uid());
       allow delete: if signedIn() && resource.data.caUid == uid();
-      allow create: if signedIn() && request.resource.data.caUid == uid();
-      // The CA edits their shop. Or a signed-in user links themselves as the owner, once: the write must carry the
-      // shop's own invite code in claimedWith, name the caller as owner, and change nothing else.
-      allow update: if (signedIn() && resource.data.caUid == uid() && request.resource.data.caUid == uid())
+      // A shop is never created with an owner: only the owner's own link write (below) can name one.
+      allow create: if signedIn() && request.resource.data.caUid == uid()
+        && !request.resource.data.keys().hasAny(['ownerUid', 'claimedWith']);
+      // The CA edits their shop but can never add or change the owner. The one exception is unlinking: both link
+      // keys removed together with the invite code removed or replaced, so the old code cannot link again.
+      // Or a signed-in user links themselves as the owner, once: the write must carry the shop's own invite code in
+      // claimedWith, name the caller as owner, change nothing else, and the invite document for that code must name
+      // this shop and be less than 7 days old.
+      allow update: if (signedIn() && resource.data.caUid == uid() && request.resource.data.caUid == uid()
+            && ((request.resource.data.get('ownerUid', null) == resource.data.get('ownerUid', null)
+                 && request.resource.data.get('claimedWith', null) == resource.data.get('claimedWith', null))
+                || (!('ownerUid' in request.resource.data) && !('claimedWith' in request.resource.data)
+                    && request.resource.data.get('inviteCode', null) != resource.data.get('inviteCode', null))))
         || (signedIn()
             && resource.data.get('ownerUid', null) == null
             && resource.data.get('inviteCode', null) is string
             && request.resource.data.ownerUid == uid()
             && request.resource.data.claimedWith == resource.data.inviteCode
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ownerUid', 'claimedWith']));
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ownerUid', 'claimedWith'])
+            && exists(/databases/$(db)/documents/invites/$(request.resource.data.claimedWith))
+            && get(/databases/$(db)/documents/invites/$(request.resource.data.claimedWith)).data.shopId == shopId
+            && request.time < get(/databases/$(db)/documents/invites/$(request.resource.data.claimedWith)).data.createdAt + duration.value(7, 'd'));
 
       match /bills/{billId} {
         allow read: if ownsShop(shopId) || isOwnerOf(shopId);
         allow delete: if ownsShop(shopId);
         // The owner can only create or edit unreviewed bills; approving, rejecting, reopening and deleting are the CA's.
         allow create: if (ownsShop(shopId) && validBill(request.resource.data))
-          || (isOwnerOf(shopId) && validBill(request.resource.data)
+          || (isOwnerOf(shopId) && validBill(request.resource.data) && noReviewKeys(request.resource.data)
               && request.resource.data.status in ['draft', 'manual_entry']);
         allow update: if (ownsShop(shopId) && validBill(request.resource.data) && reviewedBillUpdateOk())
-          || (isOwnerOf(shopId) && validBill(request.resource.data)
+          || (isOwnerOf(shopId) && validBill(request.resource.data) && noReviewKeys(request.resource.data)
               && resource.data.get('status', 'draft') in ['draft', 'manual_entry']
               && request.resource.data.status in ['draft', 'manual_entry']);
       }

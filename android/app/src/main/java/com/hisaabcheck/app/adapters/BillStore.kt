@@ -32,7 +32,7 @@ enum class PhotoResult { STORED, SKIPPED, FAILED }
 /** [synced] is true on server acknowledgement of the bill, false if the server refuses it. */
 class SavedBill(val billId: String, val synced: Deferred<Boolean>, val photo: Deferred<PhotoResult>)
 
-data class BillSummary(val id: String, val supplierName: String, val invoiceDate: String, val total: Double, val status: String)
+data class BillSummary(val id: String, val supplierName: String, val invoiceDate: String, val total: Double, val status: String, val rejectNote: String = "")
 
 /** Firestore and Storage access for bills. Same document shapes and write order as web/src/adapters/store.ts. */
 class BillStore {
@@ -144,6 +144,7 @@ class BillStore {
         invoiceDate = d.getString("invoiceDate") ?: "",
         total = d.getDouble("total") ?: 0.0,
         status = d.getString("status") ?: "draft",
+        rejectNote = (d.get("rejectNote") as? String) ?: "",
     )
 
     private fun checksMap(c: Checks) = mapOf(

@@ -180,7 +180,8 @@ fun HomeScreen(vm: BillViewModel, shopName: String, onSignOut: () -> Unit) {
 private fun RecentRow(b: BillSummary) {
     Surface(tonalElevation = 1.dp, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.heightIn(min = 56.dp).padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier.heightIn(min = 56.dp).padding(horizontal = 12.dp, vertical = 8.dp)
+                .semantics(mergeDescendants = true) {},
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
@@ -190,6 +191,14 @@ private fun RecentRow(b: BillSummary) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (b.status == "rejected" && b.rejectNote.isNotBlank()) {
+                    Text("Your CA's note: ${b.rejectNote}", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "Take a new photo of this bill if your CA asks for one.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             Text(String.format(Locale.US, "\u20B9%,.2f", b.total), fontWeight = FontWeight.Medium)
         }

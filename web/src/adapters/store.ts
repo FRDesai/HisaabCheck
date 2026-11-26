@@ -7,7 +7,7 @@ import { toRouteLog, type RouteLogDoc } from '../core/router/routeLog';
 import { inviteCode } from '../core/invite/code';
 import { toBillDoc, type BillDoc } from '../core/review/billDoc';
 
-export const CONSENT_VERSION = '2026-11-v1';
+export const CONSENT_VERSION = '2026-11-v2';
 export type UserDoc = { role: 'ca' | 'owner' | 'admin'; name: string; email: string; consentVersion?: string };
 export type Shop = { id: string; caUid: string; shopName: string; gstin: string; state: string; storeImages: boolean; inviteCode?: string; ownerUid?: string };
 

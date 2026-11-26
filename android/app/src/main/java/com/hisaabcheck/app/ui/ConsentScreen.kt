@@ -43,7 +43,7 @@ fun ConsentScreen(vm: SessionViewModel) {
             "Bills are read on this phone when possible.",
             "Your CA can see the bills you send and the details read from them.",
             "If a bill needs the cloud, PAN, Aadhaar, phone and bank numbers are blacked out first.",
-            "Photos are not stored unless your CA turns that on for your shop. Data is kept in India (Mumbai).",
+            "Photos are not stored unless your CA turns that on for your shop. Saved bill data is stored in India (Mumbai). Bills read in the cloud are processed by Google's Gemini service.",
             "You can withdraw consent by signing out and asking your CA to delete your data.",
         ).forEach { Text("\u2022  $it", style = MaterialTheme.typography.bodyLarge) }
         LiveError(ui.error)

@@ -23,7 +23,7 @@ export default function ConsentPage() {
       <ul className="list-disc pl-6 space-y-1 text-slate-700">
         <li>Bills are read on this computer when possible.</li>
         <li>If a bill needs the cloud, PAN, Aadhaar, phone and bank numbers are blacked out first.</li>
-        <li>Photos are not stored unless you turn that on for a shop. Data is kept in India (Mumbai).</li>
+        <li>Photos are not stored unless you turn that on for a shop. Saved bill data is stored in India (Mumbai). Bills read in the cloud are processed by Google's Gemini service.</li>
         <li>You can withdraw consent by signing out and asking us to delete your data.</li>
       </ul>
       {error && <p role="alert" className="text-red-700 text-sm">{error}</p>}

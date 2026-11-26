@@ -41,7 +41,7 @@ Set-up for all of these is in the README section "Android app".
 
 ## Decisions made during the build
 
-- The owner's consent has its own wording and its own version string, `2026-11-v1-owner` (the web's consent version is separate). The owner wording says the CA can see the bills and gives the way to withdraw (sign out and ask the CA to delete the data).
+- The owner's consent has its own wording and its own version string, `2026-11-v2-owner` (the web's consent version is separate). The owner wording says the CA can see the bills and gives the way to withdraw (sign out and ask the CA to delete the data).
 - An invite code works for 7 days and for one owner. Linking checks that the invite document names this shop and this shop's CA and is under 7 days old.
 - A CA can only unlink an owner, and must replace or remove the invite code in the same write, so the old code cannot link again. The web has no unlink button yet.
 - A shop is never created with an owner. Only the owner's own link write can name one.
@@ -147,7 +147,7 @@ Screens
 - The shop's settings (such as "store images") are cached for the session.
 - After "Retry cloud", the earlier attempt's stored photo (including one whose upload finished late and was not linked) stays in Storage, unreferenced; owners cannot delete, so cleanup is the CA's side.
 - "Retry cloud" stays available after the owner has saved edits, and its save still overwrites those edits.
-- Consent wording (both platforms, owner's decision pending): "Data is kept in India (Mumbai)" is not something the code guarantees for the cloud read through the Gemini Developer API.
+- Consent wording (both platforms), changed 2026-11-27: the old sentence "Data is kept in India (Mumbai)" was not something the code guarantees for the cloud read through the Gemini Developer API. Both screens now say "Saved bill data is stored in India (Mumbai). Bills read in the cloud are processed by Google's Gemini service." and the versions are `2026-11-v2` (web) and `2026-11-v2-owner` (Android), so existing users are asked again. Not checked: where Google processes a cloud read.
 
 Build
 - The app module has no test dependencies.

@@ -104,7 +104,7 @@ Defaults are in `web/src/core/config/defaults.ts` and `firebase/remoteconfig.tem
 
 **Firebase project** (the code uses the placeholder project ID `hisaabcheck-dev`):
 1. Create a project and put it on the Blaze plan.
-2. Pick region `asia-south1` for Firestore and Storage.
+2. Pick region `asia-south1` (Mumbai) for Firestore and Storage. That is where saved bill data would live. Cloud reads go through Google's Gemini service, and the code does not control where they are processed.
 3. Enable Firebase AI Logic with the Gemini Developer API.
 4. Enable Google sign-in in Authentication (CAs, on the web). For the Android app also enable Phone sign-in (see "Android app").
 5. Create Firestore and Storage.
@@ -173,7 +173,7 @@ The summary shows device and cloud field accuracy, failed and unsure bills, skip
 
 ## Android app
 
-`android/` holds the shop owner's app (Kotlin, Jetpack Compose, package `com.hisaabcheck.app`). The owner signs in with a phone number and an SMS code, accepts a consent statement (its own wording and version string, `2026-11-v1-owner`, separate from the web's), and links to the CA's shop by typing an 8-character invite code. After that the owner photographs a bill or picks one from the gallery. The app reads it on the phone when the phone supports on-device AI, and otherwise (or when the on-device read fails its checks) blacks out private numbers on a copy of the image, shows that copy for the owner to send or keep, and only then sends it to the cloud model. The result screen shows the fields and checks and lets the owner correct them. Bills and counts-only route logs go to the same Firestore shop as the web app, so they show up in the CA's inbox and on the dashboard. Photos are stored only if the CA's shop has "store images" on, and only the redacted copy.
+`android/` holds the shop owner's app (Kotlin, Jetpack Compose, package `com.hisaabcheck.app`). The owner signs in with a phone number and an SMS code, accepts a consent statement (its own wording and version string, `2026-11-v2-owner`, separate from the web's), and links to the CA's shop by typing an 8-character invite code. After that the owner photographs a bill or picks one from the gallery. The app reads it on the phone when the phone supports on-device AI, and otherwise (or when the on-device read fails its checks) blacks out private numbers on a copy of the image, shows that copy for the owner to send or keep, and only then sends it to the cloud model. The result screen shows the fields and checks and lets the owner correct them. Bills and counts-only route logs go to the same Firestore shop as the web app, so they show up in the CA's inbox and on the dashboard. Photos are stored only if the CA's shop has "store images" on, and only the redacted copy.
 
 **What has and has not been checked.** The Android app compiles and assembles, and its Kotlin core passes its tests on the JVM. It has never been run on a phone, on an emulator, or against a real Firebase project. Everything in this section describes what the code is written to do. The runtime check list is in `docs/superpowers/2026-11-26-subproject-c-followups.md`.
 

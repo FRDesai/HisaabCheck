@@ -15,8 +15,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 
-/** The owner statement differs from the CA statement on the web (2026-11-v1), so it has its own version. */
-const val CONSENT_VERSION = "2026-11-v1-owner"
+/** The owner statement differs from the CA statement on the web (2026-11-v2), so it has its own version. */
+const val CONSENT_VERSION = "2026-11-v2-owner"
 
 private const val INVITE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 private const val INVITE_LENGTH = 8

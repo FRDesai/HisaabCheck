@@ -3,6 +3,7 @@ import { fetchBillsByInvoiceDate, type Shop } from '../../adapters/store';
 import { isIsoDate, istMonth, monthRange } from '../../core/dates';
 import { toCsv } from '../../core/export/csv';
 import { exportable, fileSlug, notApprovedInRange } from '../../core/export/rows';
+import { tallyReady, toTallyMastersXml, toTallyVouchersXml } from '../../core/export/tallyXml';
 import type { BillDoc } from '../../core/review/billDoc';
 import { downloadText } from './download';
 
@@ -30,6 +31,7 @@ export default function ExportPanel({ shop, month, refreshKey }: { shop: Shop; m
 
   const name = `hisaabcheck-${fileSlug(shop.shopName)}-${from}-to-${to}`;
   const none = !found || found.ready.length === 0;
+  const tally = found ? tallyReady(found.ready) : { ok: [] as BillDoc[], unbalanced: [] as BillDoc[] };
 
   return (
     <section aria-labelledby="export-heading" className="bg-white rounded-lg border p-4 space-y-3">
@@ -43,7 +45,10 @@ export default function ExportPanel({ shop, month, refreshKey }: { shop: Shop; m
         </label>
         <button type="button" className="px-4 py-2 rounded-lg bg-emerald-700 text-white disabled:opacity-50" disabled={none}
           onClick={() => found && downloadText(`${name}.csv`, 'text/csv;charset=utf-8', toCsv(found.ready))}>Download CSV</button>
-        {/* TALLY BUTTONS (Task 9) */}
+        <button type="button" className="px-4 py-2 rounded-lg border disabled:opacity-50" disabled={tally.ok.length === 0}
+          onClick={() => downloadText(`${name}-tally-1-masters.xml`, 'application/xml;charset=utf-8', toTallyMastersXml(tally.ok))}>Tally XML: 1. ledgers</button>
+        <button type="button" className="px-4 py-2 rounded-lg border disabled:opacity-50" disabled={tally.ok.length === 0}
+          onClick={() => downloadText(`${name}-tally-2-vouchers.xml`, 'application/xml;charset=utf-8', toTallyVouchersXml(tally.ok))}>Tally XML: 2. vouchers</button>
       </div>
       {!rangeOk && <p role="alert" className="text-sm text-red-700">Choose a From date that is on or before the To date.</p>}
       {state === 'loading' && <p role="status" className="text-sm text-slate-600">Counting bills…</p>}
@@ -53,6 +58,10 @@ export default function ExportPanel({ shop, month, refreshKey }: { shop: Shop; m
           {found.ready.length} approved bill{found.ready.length === 1 ? '' : 's'} in this range.
           {found.leftOut > 0 && ` ${found.leftOut} more ${found.leftOut === 1 ? 'is' : 'are'} not approved and will be left out.`}
         </p>
+      )}
+      {tally.ok.length > 0 && <p className="text-xs text-slate-600">For Tally, import the ledgers file first, then the vouchers file. Try it on a test company first: this format has not been checked against every Tally version.</p>}
+      {tally.unbalanced.length > 0 && (
+        <p role="status" className="text-sm text-amber-900">{tally.unbalanced.length} approved bill{tally.unbalanced.length === 1 ? ' is' : 's are'} left out of the Tally files because taxable value + tax differs from the total by more than ₹1: {tally.unbalanced.map((b) => b.extraction.invoiceNo || b.id).join(', ')}. They are in the CSV.</p>
       )}
     </section>
   );

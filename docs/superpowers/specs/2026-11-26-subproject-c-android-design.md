@@ -109,7 +109,7 @@ Rules summary:
 | --- | --- | --- | --- |
 | `users/{uid}` (own) | create as `ca`, update without changing role | create as `owner`, same | — |
 | `shops/{id}` | as today | read; the one-time link update | the one-time link update, if they know the code |
-| `shops/{id}/bills/{id}` | as today (review lock from B stays) | read; create and update with status `draft` or `manual_entry` only; cannot touch a reviewed bill except the photo path | — |
+| `shops/{id}/bills/{id}` | as today (review lock from B stays) | read; create and update with status `draft` or `manual_entry` only; cannot change a reviewed bill at all | — |
 | `invites/{code}` | create for own shop; read; delete | read by id | read by id |
 | `routeLogs` | as today | create for own shop with `platform: android` and the shop's `caUid` | — |
 | Storage `shops/{id}/bills/*` | as today | read; upload if the shop stores photos | — |

@@ -1,0 +1,49 @@
+{
+  "regenerate": "cd web && npx vite-node ../android/core/src/test/differential/generate.ts",
+  "files": [
+    {
+      "path": "android/core/src/test/differential/generate.ts",
+      "sha256": "4e8a59dc085d1459aa6b0f20948a91adc5fcaf657108133a6c3a18a2364fcb03"
+    },
+    {
+      "path": "web/src/core/checks/checks.ts",
+      "sha256": "5635b28eb19bc96194139652499164da2719a1e88f870dd843f93b2eafe0f479"
+    },
+    {
+      "path": "web/src/core/config/defaults.ts",
+      "sha256": "2668b9f20b53c7366dd5f07b7ebded3e8adfba4b4d4b2792888c54702f1ea47f"
+    },
+    {
+      "path": "web/src/core/config/parseConfig.ts",
+      "sha256": "f25bd621cf4693437972566b2c311535633052beafcc9f3d1489518bc07f2bbe"
+    },
+    {
+      "path": "web/src/core/extract/parse.ts",
+      "sha256": "580af28bdd5a7284af31c167ed38a3006dce68b9ecb55d533d2d3d29851b853c"
+    },
+    {
+      "path": "web/src/core/redact/planRedaction.ts",
+      "sha256": "de8602fcc7253d0e0700fe860209044e5f114362281648d706d49feae304a98f"
+    },
+    {
+      "path": "web/src/core/shield/adequacy.ts",
+      "sha256": "e7379a9bf69d500eca787cd3d2c13c2846e703de2752f82cb9438df2dcd4e5c4"
+    },
+    {
+      "path": "web/src/core/shield/gstin.ts",
+      "sha256": "87145048559d04341c37c1f7e2c91e6bd457cb61242d6f4cecfaee3455acf8ad"
+    },
+    {
+      "path": "web/src/core/shield/shield.ts",
+      "sha256": "5222488b310c1becc0360daaaf23165948014a50a06b0a1672911a563b180879"
+    },
+    {
+      "path": "web/src/core/shield/verhoeff.ts",
+      "sha256": "8e4d4f79532367440f6fbac90a1448cc263a614785a041c81b00df83131ba4ea"
+    },
+    {
+      "path": "web/src/core/types.ts",
+      "sha256": "f95813d8ac93a4f9183bd494f29d2d51927f739b68a0ffbcf62fb4ebbfa162f7"
+    }
+  ]
+}

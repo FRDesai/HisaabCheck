@@ -12,7 +12,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.double
-import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -48,12 +47,12 @@ class DifferentialTest {
     @Test
     fun shieldAdequacyAndRedactionMatchTypeScript() {
         val all = cases("shield.json")
-        assertTrue(all.size >= 2500)
+        assertTrue(all.size >= 1800)
         checkAll("shield", all) { c ->
             val words = c.getValue("words").jsonArray.map { w ->
                 val a = w.jsonArray
                 OcrWord(a[0].jsonPrimitive.content, Box(a[3].jsonPrimitive.double, a[4].jsonPrimitive.double, a[5].jsonPrimitive.double, a[6].jsonPrimitive.double),
-                    a[2].jsonPrimitive.doubleOrNull ?: Double.NaN, a[1].jsonPrimitive.int)
+                    jsNum(a[2]), a[1].jsonPrimitive.int)
             }
             val r = runShield(words, c.getValue("threshold").jsonPrimitive.double)
             val expectedMatches = c.getValue("matches").jsonArray.map { m ->
@@ -83,7 +82,7 @@ class DifferentialTest {
     @Test
     fun parseExtractionMatchesTypeScript() {
         val all = cases("parse.json")
-        assertTrue(all.size >= 2000)
+        assertTrue(all.size >= 1598)
         checkAll("parse", all) { c ->
             val raw = c.getValue("raw").jsonPrimitive.content
             val got = parseExtraction(raw)
@@ -177,5 +176,18 @@ class DifferentialTest {
         val parse = cases("parse.json")
         assertTrue(parse.count { it.getValue("expected") is JsonNull } > 300)
         assertTrue(parse.count { it.getValue("expected") !is JsonNull } > 1000)
+    }
+
+    @Test
+    fun corporaHoldEveryEdgeCategory() {
+        fun cats(name: String) = cases(name).mapNotNull { it["cat"]?.jsonPrimitive?.content }.groupingBy { it }.eachCount()
+        val shield = cats("shield.json")
+        for (c in listOf("negative_line", "surrogates_emoji", "case_mapping", "foreign_digits", "confidence_extremes", "long_lines", "empty_words")) {
+            assertTrue((shield[c] ?: 0) >= 10, "shield edge category $c has ${shield[c] ?: 0} cases")
+        }
+        val parse = cats("parse.json")
+        for (c in listOf("unicode_escapes", "lone_surrogates", "duplicate_keys", "deep_nesting", "foreign_digits")) {
+            assertTrue((parse[c] ?: 0) >= 20, "parse edge category $c has ${parse[c] ?: 0} cases")
+        }
     }
 }

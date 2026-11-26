@@ -1,11 +1,17 @@
 /**
  * Generates the differential corpora in ../resources/differential/ by running the web's TypeScript core
- * (the specification) on seeded random inputs. The Kotlin DifferentialTest replays them and demands identical output.
+ * (the specification) on seeded random inputs plus a deterministic edge section per area. The Kotlin
+ * DifferentialTest replays them and demands identical output.
  *
- * Run from web/:  npx vite-node ../android/core/src/test/differential/generate.ts
- * Deterministic: the same seed always gives the same files.
+ * Regenerate (from the repository root):
+ *   cd web && npx vite-node ../android/core/src/test/differential/generate.ts
+ *
+ * Deterministic: the same seed always gives the same files. It also writes manifest.json: the SHA-256 of the raw
+ * bytes of every TypeScript source the corpora come from (SOURCES below) and of this file. The Kotlin
+ * DifferentialManifestTest fails when any of them changes, so stale fixtures cannot pass silently.
  */
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runShield } from '../../../../../web/src/core/shield/shield';
@@ -124,14 +130,13 @@ function randomWords(): OcrWord[] {
   return words;
 }
 
-const shieldCases = Array.from({ length: 2500 }, () => {
-  const words = randomWords();
-  const threshold = pick([0.6, 0.6, 0.6, 0.5, 0.9]);
+function shieldCase(words: OcrWord[], threshold: number, cat?: string) {
   const r = runShield(words, threshold);
   const plan = planRedaction(words, r, 1000, 120);
   return {
-    // [text, line, confidence (null for NaN), x0, y0, x1, y1]
-    words: words.map((w) => [w.text, w.line, Number.isNaN(w.confidence) ? null : w.confidence, w.bbox.x0, w.bbox.y0, w.bbox.x1, w.bbox.y1]),
+    ...(cat ? { cat } : {}),
+    // [text, line, confidence as String(n) (so NaN, Infinity and -0 survive), x0, y0, x1, y1]
+    words: words.map((w) => [w.text, w.line, num(w.confidence), w.bbox.x0, w.bbox.y0, w.bbox.x1, w.bbox.y1]),
     threshold,
     gstinWordIndexes: r.gstinWordIndexes,
     matches: r.matches.map((m) => ({ type: m.type, wordIndexes: m.wordIndexes })),
@@ -141,7 +146,71 @@ const shieldCases = Array.from({ length: 2500 }, () => {
     boxes: plan.boxes.map((b) => [num(b.x0), num(b.y0), num(b.x1), num(b.y1)]),
     piiTypes: plan.piiTypes,
   };
+}
+
+const randomShieldCases = Array.from({ length: 1550 }, () => shieldCase(randomWords(), pick([0.6, 0.6, 0.6, 0.5, 0.9])));
+
+// ---- shield edge section: inputs the random bulk never produces
+
+/** Words from [text, line, confidence] triples; boxes advance per line like the web helper. Empty texts are kept. */
+function place(entries: Array<[string, number, number]>): OcrWord[] {
+  const xs = new Map<number, number>();
+  return entries.map(([text, line, confidence]) => {
+    const x = xs.get(line) ?? 0;
+    xs.set(line, x + text.length * 10 + 10);
+    return { text, confidence, line, bbox: { x0: x, y0: line * 20, x1: x + text.length * 10, y1: line * 20 + 16 } };
+  });
+}
+const tokensOfLine = () => {
+  const out: string[] = [];
+  for (let k = 0, n = 1 + int(5); k < n; k++) out.push(...pick([() => pick(LABEL_WORDS), piiToken, piiToken, () => pick(FILLER)])().split(' ').filter(Boolean));
+  return out;
+};
+/** Random lines of tokens, each token transformed by `f`. */
+const linesOf = (nLines: number, f: (t: string) => string, conf: () => number = () => 95): Array<[string, number, number]> => {
+  const out: Array<[string, number, number]> = [];
+  for (let li = 0; li < nLines; li++) for (const t of tokensOfLine()) out.push([f(t), li, conf()]);
+  return out;
+};
+const insertAt = (t: string, s: string) => { const i = int(t.length + 1); return t.slice(0, i) + s + t.slice(i); };
+const EMOJI = ['\u1F600', '\u1F1EE\u1F1F3', '\u1D7CF', '\uD800', '\uDC00', '\uDE00\uD83D', '\u200D', '\uFE0F', '\u20B9'];
+const caseFold = (t: string) => t.toLowerCase()
+  .replace(/i/g, () => (chance(0.5) ? '\u0131' : 'i'))
+  .replace(/s/g, () => (chance(0.5) ? '\u017F' : 's'))
+  .replace(/fi/g, () => (chance(0.5) ? '\uFB01' : 'fi'))
+  .replace(/n/g, () => (chance(0.1) ? '\u0149' : 'n'));
+const DIGIT_BASES = [0xff10, 0x0966, 0x0660, 0x06f0];
+const foreignDigits = (t: string) => t.replace(/\d/g, (d) => {
+  if (!chance(0.35)) return d;
+  return chance(0.2) ? '\uD835' + String.fromCharCode(0xdfce + Number(d)) : String.fromCharCode(pick(DIGIT_BASES) + Number(d));
 });
+const EXTREME_CONF = [0, -0, 100, 100.5, 150, 1e9, -5, Number.NaN, Infinity, -Infinity, 60, 60.00000000000001, 59.99999999999999, 50, 49.99];
+
+const edgeShield: Array<ReturnType<typeof shieldCase>> = [];
+const edge = (cat: string, words: OcrWord[], threshold = 0.6) => edgeShield.push(shieldCase(words, threshold, cat));
+// Negative line indexes (JavaScript drops them: never scanned, never a previous line).
+for (const w of [[['AAPFU0939F', -1, 95]], [['Account', -1, 95], ['50100234567890', 0, 95]], [['PAN', -1, 95], ['AAPFU0939F', 0, 95]],
+  [['Mob', 0, 95], ['98450', -1, 95], ['12345', 0, 95]], [['ABCDE12', -3, 10], ['Ref1234', -1, 10]]] as Array<Array<[string, number, number]>>) edge('negative_line', place(w));
+for (let k = 0; k < 35; k++) edge('negative_line', place(linesOf(1 + int(3), (t) => t).map(([t, li, c]) => [t, chance(0.4) ? -1 - int(3) : li, c])));
+// Surrogate pairs, emoji, lone surrogates, joiners next to and inside numbers.
+for (let k = 0; k < 40; k++) edge('surrogates_emoji', place(linesOf(1 + int(3), (t) => (chance(0.5) ? insertAt(t, pick(EMOJI)) : t))));
+// Upper-casing that maps into ASCII or changes length (dotless i, long s, fi ligature, sharp s, n preceded by apostrophe).
+for (let k = 0; k < 40; k++) edge('case_mapping', place(linesOf(1 + int(3), (t) => (chance(0.6) ? caseFold(t) : chance(0.3) ? '\u00DF' + t : t))));
+// Full-width, Devanagari, Arabic-Indic, Persian and mathematical (non-BMP) digits.
+for (let k = 0; k < 40; k++) edge('foreign_digits', place(linesOf(1 + int(3), foreignDigits)));
+// Confidence 0, -0, above 100, NaN, infinities, and the 0.6 * 100 = 60.00000000000001 boundary; enough words for ocrAdequate.
+for (let k = 0; k < 40; k++) edge('confidence_extremes', place(linesOf(4 + int(4), (t) => t, () => pick(EXTREME_CONF))), pick([0.6, 0.5, 0, 1]));
+// Very long lines: hundreds of words, and single words thousands of characters long.
+for (let k = 0; k < 6; k++) edge('long_lines', place(Array.from({ length: 300 + int(300) }, () => [pick([piiToken, () => pick(FILLER), () => pick(LABEL_WORDS)])().replace(/ /g, ''), 0, 95] as [string, number, number])));
+for (let k = 0; k < 4; k++) edge('long_lines', place([['Account', 0, 95], [rs(DIG, 3000 + int(2000)), 0, 95], ['Mob', 0, 95], [rs(DIG + UPPER + ' -', 4000), 0, 95]]));
+// Empty and whitespace-only word texts (the web helper's filter(Boolean) never produces them).
+for (let k = 0; k < 40; k++) {
+  const w = linesOf(1 + int(3), (t) => t);
+  for (let j = 0, n = 1 + int(4); j < n; j++) w.splice(int(w.length + 1), 0, [pick(['', '', ' ', '\u00A0', '\t']), int(3), 95]);
+  edge('empty_words', place(w));
+}
+
+const shieldCases = [...edgeShield, ...randomShieldCases];
 
 // ---------------------------------------------------------------- parseExtraction
 
@@ -185,11 +254,89 @@ function mutate(s: string): string {
   }
 }
 
-const parseCases = Array.from({ length: 2000 }, () => {
+function randomObject(): Record<string, unknown> {
   const o: Record<string, unknown> = {};
   for (const f of FIELDS) if (chance(0.75)) o[f] = randomValue();
   if (chance(0.6)) o.items = chance(0.8) ? Array.from({ length: int(4) }, () => (chance(0.8) ? randomItem(1) : randomValue(2))) : randomValue();
-  const raw = mutate(JSON.stringify(o));
+  return o;
+}
+
+const randomParseCases = Array.from({ length: 1300 }, () => parseCase(mutate(JSON.stringify(randomObject()))));
+
+// ---- parser edge section
+
+/** A JSON value whose objects may repeat keys: { entries } keeps every [key, value] pair in order. */
+type J = null | boolean | number | string | J[] | { entries: Array<[string, J]> };
+const hex4 = (code: number) => {
+  const h = code.toString(16).padStart(4, '0');
+  return chance(0.5) ? h : h.toUpperCase(); // JSON allows either case
+};
+/** JSON text for a string; each code unit is written as a backslash-u escape with probability `p` (raw otherwise, lone surrogates included). */
+const encStr = (s: string, p: number) => {
+  let out = '"';
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]; const code = c.charCodeAt(0);
+    if (chance(p)) out += '\\u' + hex4(code);
+    else if (c === '"') out += '\\"';
+    else if (c === '\\') out += '\\\\';
+    else if (code < 0x20) out += pick(['\\u' + hex4(code), JSON.stringify(c).slice(1, -1)]);
+    else if (c === '/' && chance(0.5)) out += '\\/';
+    else out += c;
+  }
+  return out + '"';
+};
+function enc(v: J, p: number): string {
+  if (v === null || typeof v === 'boolean' || typeof v === 'number') return JSON.stringify(v);
+  if (typeof v === 'string') return encStr(v, p);
+  if (Array.isArray(v)) return '[' + v.map((x) => enc(x, p)).join(',') + ']';
+  return '{' + v.entries.map(([k, x]) => encStr(k, p) + ':' + enc(x, p)).join(',') + '}';
+}
+/** Plain JS value to J (keys in order, no duplicates). */
+const toJ = (v: unknown): J => {
+  if (Array.isArray(v)) return v.map(toJ);
+  if (v !== null && typeof v === 'object') return { entries: Object.entries(v).map(([k, x]) => [k, toJ(x)]) };
+  return v as J;
+};
+const LONE = ['\uD800', '\uDBFF', '\uDC00', '\uDFFF', '\uDE00\uD83D', '\u1F600'];
+const FOREIGN_NUMERIC = ['\uFF11\uFF17\uFF17\uFF10', '\u0967\u096D\u096D\u0966', '\u0661\u0667', '\u1D7CF\u1D7D0', '17\u1F60070', '\u20B9\uFF11,770', '1770\u200D', '\uFF10x10'];
+
+const edgeParse: Array<ReturnType<typeof parseCase>> = [];
+const pEdge = (cat: string, raw: string) => edgeParse.push({ cat, ...parseCase(raw) });
+// Backslash-u escapes everywhere, keys included ("total" is the key total).
+for (let k = 0; k < 120; k++) pEdge('unicode_escapes', enc(toJ(randomObject()), pick([0.05, 0.3, 1])));
+// Lone and reversed surrogates, raw and escaped, in text, GSTIN, numeric strings and keys.
+for (let k = 0; k < 50; k++) {
+  const o = toJ(randomObject()) as { entries: Array<[string, J]> };
+  for (const f of ['supplierName', 'supplierGstin', 'invoiceNo', 'total', 'cgst']) if (chance(0.5)) o.entries.push([f, insertAt(pick(['29aagcb7383j1z4', '1770', 'Ravi', '']), pick(LONE))]);
+  if (chance(0.3)) o.entries.push([pick(LONE) + 'total', 5]);
+  pEdge('lone_surrogates', enc(o, pick([0, 0, 0.3])));
+}
+// Duplicate keys with different types; JSON.parse keeps the last.
+for (let k = 0; k < 60; k++) {
+  const o = toJ(randomObject()) as { entries: Array<[string, J]> };
+  for (let j = 0, n = 1 + int(4); j < n; j++) o.entries.splice(int(o.entries.length + 1), 0, [pick([...FIELDS, 'items']), toJ(chance(0.3) ? randomItem(1) : randomValue(1))]);
+  pEdge('duplicate_keys', enc(o, 0));
+}
+// Deep nesting: valid at many depths, and broken by one bracket.
+for (const depth of [100, 199, 200, 201, 1000, 5000, 10000]) {
+  const arr = '['.repeat(depth) + ']'.repeat(depth);
+  const obj = '{"a":'.repeat(depth) + '1' + '}'.repeat(depth);
+  pEdge('deep_nesting', '{"total":5,"x":' + arr + '}');
+  pEdge('deep_nesting', '{"total":5,"items":[' + arr + ',{"amount":3}],"y":' + obj + '}');
+  pEdge('deep_nesting', '{"total":5,"x":' + arr.slice(1) + '}');
+  pEdge('deep_nesting', '{"total":5,"x":' + '['.repeat(depth) + '{"amount":"1"}' + ']'.repeat(depth) + ']' + '}');
+}
+// Foreign digits, mathematical digits and emoji in numeric strings and counts.
+for (let k = 0; k < 40; k++) {
+  const o = toJ(randomObject()) as { entries: Array<[string, J]> };
+  for (const f of ['total', 'cgst', 'itemCount', 'confidence', 'invoiceNo', 'placeOfSupply']) if (chance(0.5)) o.entries.push([f, pick(FOREIGN_NUMERIC)]);
+  if (chance(0.5)) o.entries.push(['items', [{ entries: [['amount', pick(FOREIGN_NUMERIC)], ['hsn', pick(FOREIGN_NUMERIC)]] }]]);
+  pEdge('foreign_digits', enc(o, pick([0, 0.2])));
+}
+
+const parseCases = [...edgeParse, ...randomParseCases];
+
+function parseCase(raw: string) {
   const e = parseExtraction(raw);
   return {
     raw,
@@ -200,13 +347,14 @@ const parseCases = Array.from({ length: 2000 }, () => {
       taxableValue: num(e.taxableValue), cgst: num(e.cgst), sgst: num(e.sgst), igst: num(e.igst), total: num(e.total), confidence: num(e.confidence),
     },
   };
-});
+}
 
 // ---------------------------------------------------------------- parseConfig
 
 const CONFIG_VALUES = ['smart', 'device_only', 'cloud_only', ' smart', 'SMART', 'yolo', '', ' ', '\u00A0', '0', '0.5', '0.7', '1', '1.5', '-0', '-0.1', '7', '100', '100.5', '99.5',
   '2.5', '3.5', '0.49999999999999994', '2.4999999999999996', '0x1', '0x10', '0b1', '0o7', '1e-1', '1e2', '.5', '5.', ' 0.7 ', '\uFEFF0.6\u3000', '0.6\u001C', 'NaN',
-  'Infinity', 'abc', '1_0', 'true', 'false', 'FALSE', ' false', 'v1', 'v2', ' v2 ', 'gemini-x', '\u2028m\u2029', 'toString', '__proto__'];
+  'Infinity', 'abc', '1_0', 'true', 'false', 'FALSE', ' false', 'v1', 'v2', ' v2 ', 'gemini-x', '\u2028m\u2029', 'toString', '__proto__',
+  '\uff10.5', '\u0966', '\ud835\udfcf', '1\ud83d\ude00', '\uD800', 'f\u0131le', 'cloud_\u017fmart'];
 const CONFIG_KEYS = ['routing_mode', 'confidence_threshold', 'consent_ocr_threshold', 'total_tolerance_inr', 'max_device_line_items', 'cloud_model', 'extraction_prompt_version', 'mask_pii'];
 const configCases = Array.from({ length: 600 }, () => {
   const values: Record<string, string> = {};
@@ -225,8 +373,10 @@ const base: Extraction = { supplierName: 'Ravi Traders', supplierGstin: '29AAGCB
   items: [{ description: 'Rice', hsn: '1006', qty: 10, rate: 100, amount: 1000 }, { description: 'Dal', hsn: '0713', qty: 5, rate: 100, amount: 500 }],
   taxableValue: 1500, cgst: 135, sgst: 135, igst: 0, total: 1770, confidence: 0.9 };
 const DATES = ['2026-11-02', '2026-11-20', '2026-11-21', '2026-11-22', '2023-11-20', '2023-11-19', '2023-11-21', '2026-02-30', '2024-02-29', '2025-02-29', '2026-13-01',
-  '2026-00-10', '2026-11-00', '2026-11-2', '02-11-2026', '', '2026-11-02\n', '0000-01-01', '9999-12-31', '2026-04-31', '2026-12-31', '2027-01-01'];
-const POS = ['29-Karnataka', '29', ' 29 Karnataka', '27-Maharashtra', 'Karnataka', '', '\u00A029', '07 Delhi', '2', '\u0662\u0669', '97'];
+  '2026-00-10', '2026-11-00', '2026-11-2', '02-11-2026', '', '2026-11-02\n', '0000-01-01', '9999-12-31', '2026-04-31', '2026-12-31', '2027-01-01',
+  '\uFF12\uFF10\uFF12\uFF16-11-02', '2026-11-\u0966\u0968', '2026-11-02\uD83D\uDE00'];
+const POS = ['29-Karnataka', '29', ' 29 Karnataka', '27-Maharashtra', 'Karnataka', '', '\u00A029', '07 Delhi', '2', '\u0662\u0669', '97',
+  '\uFF12\uFF19', '\u0968\u096F', '\uD835\uDFD0\uD835\uDFD7', '\uFEFF\u300029'];
 const GSTINS = ['29AAGCB7383J1Z4', '27AAPFU0939F1ZV', '07AAACR5055K1Z9', '29AAGCB7383J1Z5', '', '29aagcb7383j1z4', '27AAPFU0939F1ZV\n', '99AAPFU0939F1ZV'];
 const MONEY = [0, -0, 0.1, 0.2, 0.30000000000000004, 1, 9, 9.5, 18, 100, 118, 135, 135.5, 136, 1500, 1770, 1770.8, 1771, 1771.0000001, 1769, 270, -1, 1e-9];
 const TODAYS = ['2026-11-20T10:00:00+05:30', '2026-11-21T02:00:00+05:30', '2026-11-20T18:29:59.999Z', '2026-11-20T18:30:00Z', '2026-11-21T18:29:59.999Z',
@@ -260,5 +410,35 @@ write('shield.json', shieldCases);
 write('parse.json', parseCases);
 write('config.json', configCases);
 write('checks.json', checksCases);
-console.log(`shield ${shieldCases.length}, parse ${parseCases.length} (null ${parseCases.filter((c) => c.expected === null).length}), config ${configCases.length}, checks ${checksCases.length}`);
+// ---- manifest: what the corpora were generated from
+
+const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../..');
+/** Every TypeScript source the corpora exercise (the imports above and their imports), and this generator. */
+const SOURCES = [
+  'android/core/src/test/differential/generate.ts',
+  'web/src/core/checks/checks.ts',
+  'web/src/core/config/defaults.ts',
+  'web/src/core/config/parseConfig.ts',
+  'web/src/core/extract/parse.ts',
+  'web/src/core/redact/planRedaction.ts',
+  'web/src/core/shield/adequacy.ts',
+  'web/src/core/shield/gstin.ts',
+  'web/src/core/shield/shield.ts',
+  'web/src/core/shield/verhoeff.ts',
+  'web/src/core/types.ts',
+].sort();
+const REGENERATE = 'cd web && npx vite-node ../android/core/src/test/differential/generate.ts';
+writeFileSync(resolve(OUT, 'manifest.json'), JSON.stringify({
+  regenerate: REGENERATE,
+  files: SOURCES.map((path) => ({ path, sha256: createHash('sha256').update(readFileSync(resolve(REPO, path))).digest('hex') })),
+}, null, 2) + '\n');
+
+const counts = (cases: Array<{ cat?: string }>) => {
+  const m: Record<string, number> = {};
+  for (const c of cases) if (c.cat) m[c.cat] = (m[c.cat] ?? 0) + 1;
+  return JSON.stringify(m);
+};
+console.log(`shield ${shieldCases.length} (edge ${edgeShield.length}), parse ${parseCases.length} (edge ${edgeParse.length}, null ${parseCases.filter((c) => c.expected === null).length}), config ${configCases.length}, checks ${checksCases.length}`);
 console.log(`shield: with matches ${shieldCases.filter((c) => c.matches.length).length}, uncertain ${shieldCases.filter((c) => c.uncertain).length}`);
+console.log(`shield edges ${counts(edgeShield)}`);
+console.log(`parse edges ${counts(edgeParse)}`);

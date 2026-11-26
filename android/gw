@@ -1,0 +1,11 @@
+#!/bin/bash
+# Runs ./gradlew with one build at a time across all agents (8 GB machine).
+cd "$(dirname "$0")" || exit 1
+LOCK="${TMPDIR:-/tmp}/hisaabcheck-gradle.lock"
+waited=0
+until mkdir "$LOCK" 2>/dev/null; do
+  sleep 3; waited=$((waited + 3))
+  if [ "$waited" -ge 1200 ]; then echo "gw: gave up waiting for $LOCK after 20 minutes (remove it if no build is running)" >&2; exit 75; fi
+done
+trap 'rmdir "$LOCK" 2>/dev/null' EXIT INT TERM
+./gradlew --console=plain "$@"

@@ -4,3 +4,10 @@ dist/
 .env.local
 *-debug.log
 .firebase/
+android/.gradle/
+android/build/
+android/*/build/
+android/local.properties
+android/app/google-services.json
+*.apk
+.kotlin/

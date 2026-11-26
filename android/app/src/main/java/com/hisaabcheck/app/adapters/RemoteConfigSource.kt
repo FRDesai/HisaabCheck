@@ -13,8 +13,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 
-/** Reads routing settings from Remote Config; any failure falls back to the activated or bundled default values. */
-class RemoteConfigSource(private val isProd: Boolean) {
+/**
+ * Reads routing settings from Remote Config; any failure falls back to the activated or bundled default values.
+ * Masking is forced on in every build: a mask_pii value from the console can never turn it off on Android.
+ */
+class RemoteConfigSource {
     suspend fun load(): Config {
         val values: Map<String, String> = try {
             val rc = Firebase.remoteConfig
@@ -34,7 +37,7 @@ class RemoteConfigSource(private val isProd: Boolean) {
         } catch (e: Exception) {
             DEFAULT_REMOTE_VALUES
         }
-        return parseConfig(values, isProd)
+        return parseConfig(values, true)
     }
 }
 

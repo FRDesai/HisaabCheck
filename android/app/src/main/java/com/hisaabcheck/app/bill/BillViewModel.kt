@@ -8,7 +8,6 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.ListenerRegistration
-import com.hisaabcheck.app.BuildConfig
 import com.hisaabcheck.app.Shop
 import com.hisaabcheck.app.adapters.BillStore
 import com.hisaabcheck.app.adapters.BillSummary
@@ -114,7 +113,6 @@ internal fun toFormText(e: Extraction): Map<String, String> = mapOf(
 )
 
 class BillViewModel(private val shop: Shop, app: Application) : AndroidViewModel(app) {
-    private val isProd = !BuildConfig.DEBUG
     private val store = BillStore()
     private val device = FirebaseAiDevice()
     private val cloud = FirebaseAiCloud()
@@ -314,7 +312,7 @@ class BillViewModel(private val shop: Shop, app: Application) : AndroidViewModel
     }
 
     private suspend fun cascade(img: ImageInput, id: Int) {
-        val cfg = RemoteConfigSource(isProd).load()
+        val cfg = RemoteConfigSource().load()
         guard(id)
         config = cfg
         val deps = RouterDeps(device, cloud, ocr, painter, cfg, Clock { Instant.now() })
@@ -413,7 +411,7 @@ class BillViewModel(private val shop: Shop, app: Application) : AndroidViewModel
         val seq = ++editSeq
         _info.value = cur.copy(text = fields, invalid = emptySet(), edit = EditState.Saving)
         val checks = try {
-            runChecks(value, config ?: parseConfig(emptyMap(), isProd), Instant.now()).checks
+            runChecks(value, config ?: parseConfig(emptyMap(), true), Instant.now()).checks
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

@@ -62,13 +62,13 @@ web/src/core/review/
                   (missing fields → '' / 0, checks may be null, timestamps → Date | null)
   filters.ts      BillFilter, filterBills(bills, filter, month), monthsOf(bills),
                   countsByFilter(bills), nextToReview(bills, currentId)
-  decision.ts     reviewState(bill): which actions are allowed
-                  approvalBlockers(extraction, checks): string[]
-                  failedChecks(checks): (keyof Checks)[]
+  decision.ts     allowedActions(status): which actions are allowed
+                  approvalBlockers(checks), needsConfirmation(checks), failedChecks(checks)
+                  validRejectNote(note)
 web/src/core/export/
   rows.ts         exportable(bills, from, to): approved bills in range, sorted by date then invoice no
   csv.ts          toCsv(bills): string
-  tallyXml.ts     toTallyVouchersXml(bills, ledgers), toTallyMastersXml(bills, ledgers)
+  tallyXml.ts     tallyReady(bills), toTallyVouchersXml(bills, ledgers), toTallyMastersXml(bills, ledgers)
 ```
 
 `BillDoc` = `{ id, extraction: Extraction, checks: Checks | null, status, route: RouteInfo | null, imagePath: string | null, createdAt: Date | null, reviewedAt: Date | null, reviewedBy: string | null, rejectNote: string, approvedWithFailedChecks: string[] }`.
@@ -117,7 +117,8 @@ Accessibility (NFR-10): labelled inputs, filter buttons with `aria-pressed`, tab
 **Tally XML.** Two files, because Tally imports masters and vouchers separately:
 
 - *Masters*: one ledger per distinct supplier (parent "Sundry Creditors", with GSTIN when valid), plus the purchase, tax and round-off ledgers.
-- *Vouchers*: one Purchase voucher per bill, accounting-invoice mode: supplier ledger credited with the total; "Purchase Accounts" debited with the taxable value; "Input CGST", "Input SGST", "Input IGST" debited when above zero; a "Round Off" entry for any gap so every voucher balances. Supplier invoice number goes in `REFERENCE`, the bill id in the narration. Dates as `YYYYMMDD`.
+- *Vouchers*: one Purchase voucher per bill, accounting mode: supplier ledger credited with the total; "Purchases" (group Purchase Accounts) debited with the taxable value; "Input CGST", "Input SGST", "Input IGST" debited when above zero; a "Round Off" entry for a gap of up to ₹1 so every voucher balances. Supplier invoice number goes in `REFERENCE`, the bill id in the narration. Dates as `YYYYMMDD`.
+- A bill whose taxable value + tax differs from its total by more than ₹1 (possible when it was approved with the tick box) is left out of both Tally files and listed by invoice number in the export panel. Booking a large gap as rounding would put a wrong entry in the CA's books. Such bills are still in the CSV.
 
 Amounts are computed in whole paise to avoid float drift. Taxable value is `taxableValue` when above zero, otherwise `total − tax`. All text is XML-escaped; characters XML 1.0 forbids are dropped. Ledger names are constants in one place (`DEFAULT_LEDGERS`).
 

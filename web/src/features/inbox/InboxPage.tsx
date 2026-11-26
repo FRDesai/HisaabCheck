@@ -6,6 +6,7 @@ import { failedChecks } from '../../core/review/decision';
 import { BILL_FILTERS, countsByFilter, filterBills, monthsOf, type BillFilter } from '../../core/review/filters';
 import type { BillStatus } from '../../core/types';
 import { badgeText, badgeTone, CHECK_MSG } from '../result/labels';
+import ExportPanel from '../export/ExportPanel';
 import { useShop } from '../shops/useShop';
 
 const FILTER_LABEL: Record<BillFilter, string> = { to_review: 'To review', failed_checks: 'Failed checks', manual_entry: 'Manual entry', approved: 'Approved', rejected: 'Rejected', all: 'All' };
@@ -35,6 +36,7 @@ export default function InboxPage() {
   const months = useMemo(() => monthsOf(all), [all]);
   const counts = useMemo(() => countsByFilter(all, month), [all, month]);
   const shown = useMemo(() => filterBills(all, filter, month), [all, filter, month]);
+  const approvedCount = useMemo(() => all.filter((b) => b.status === 'approved').length, [all]);
   const notice = (location.state as { notice?: string } | null)?.notice;
 
   if (shopFailed) {
@@ -50,7 +52,7 @@ export default function InboxPage() {
       </div>
       {notice && <p role="status" className="p-3 rounded bg-emerald-50 text-emerald-900">{notice}</p>}
 
-      {/* EXPORT PANEL (Task 8) */}
+      {shop && <ExportPanel shop={shop} month={month} refreshKey={approvedCount} />}
 
       <div className="flex flex-wrap items-center gap-2">
         <div role="group" aria-label="Filter bills" className="flex flex-wrap gap-2">

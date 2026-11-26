@@ -2,7 +2,7 @@
 
 ## What it is
 
-HisaabCheck is a web app for accountants (CAs) in India. A CA picks a client shop, uploads photos of GST bills, and gets the key fields back (supplier, GSTIN, invoice number and date, taxable value, CGST/SGST/IGST, total) with a set of maths checks and a confidence score. The bill is read by the AI model built into Chrome (Gemini Nano) first. It goes to cloud Gemini only if the on-device read fails its checks or no on-device model exists, and only after private numbers have been blacked out of the image. It is built for the #BuildHybridAI hackathon on Firebase AI Logic hybrid inference.
+HisaabCheck is a web app for accountants (CAs) in India. A CA picks a client shop, uploads photos of GST bills, and gets the key fields back (supplier, GSTIN, invoice number and date, taxable value, CGST/SGST/IGST, total) with a set of maths checks and a confidence score. The CA then reviews each bill in an inbox, approves it or rejects it with a note, and exports approved bills as CSV or as Tally XML. The bill is read by the AI model built into Chrome (Gemini Nano) first. It goes to cloud Gemini only if the on-device read fails its checks or no on-device model exists, and only after private numbers have been blacked out of the image. It is built for the #BuildHybridAI hackathon on Firebase AI Logic hybrid inference.
 
 ## How hybrid routing works
 
@@ -52,6 +52,31 @@ Every path that ends in **manual entry** (the bill is saved with status `manual_
 - The shield is pattern-based. It can miss private numbers in unusual formats, layouts or poor OCR.
 - The leak check (see the accuracy tool below) re-reads the redacted image with the same detector. It shows that no private number the detector can recognise survived redaction. It does not show that every private number on the bill was found.
 - The human preview covers cases the shield flags as uncertain and bills where OCR read too little text. It cannot help when the shield is confidently wrong on a well-read bill.
+
+## Review and export
+
+**Inbox.** Each shop has a bill inbox (`web/src/features/inbox/InboxPage.tsx`). It shows the newest 300 bills of the shop and updates live. A "Load older bills" link adds 300 more. The filters are To review (draft or manual entry), Failed checks (open bills with at least one failed check), Manual entry, Approved, Rejected and All, each with a count, plus a month filter. The month is the invoice date's month; a bill without a valid date falls under the month it was uploaded. Filtering runs in the browser (`web/src/core/review/filters.ts`).
+
+**Review screen.** Opening a bill shows the stored photo next to the fields. The photo is the redacted copy, and it exists only for shops that opted in to storing photos; for other shops the screen says "No photo stored". Edits re-run the checks as you type.
+- Approval is blocked while the `required` or `date` check fails, because an approved bill must be exportable by its date.
+- If `total`, `gstin` or `taxSplit` fails, the CA can still approve after ticking "I have checked this bill against the paper copy". The tick covers only the failures listed when it was made. The failed checks are saved on the bill as `approvedWithFailedChecks`.
+- Reject needs a note of 1 to 500 characters. It is shown on the bill as a note to the client.
+- An approved or rejected bill can be reopened; it goes back to draft.
+- Approve, reject, reopen and save wait for the server's answer. If one has not finished after 4 seconds, the screen shows "Still saving — waiting for the connection…". Offline, the buttons stay busy until the connection returns. If the write fails, the screen shows an error and keeps the CA's edits.
+- Line items are shown read-only. The CA can choose to ignore them, and they are then removed when the bill is saved.
+- If the bill changes in another tab while the form is open, the screen says so and keeps unsaved edits.
+
+**Rules.** Firestore rules (`firebase/firestore.rules`) accept only the four statuses, accept an approval or rejection only in the signed-in owner's own name and at server time (or with the stored review time left as it was), and require a note on a reject.
+
+**CSV.** From the export panel, pick an invoice-date range (it starts at the selected month). The CSV has one row per approved bill in that range, sorted by invoice date, then invoice number: invoice date, invoice no., supplier, supplier GSTIN, place of supply, taxable value, CGST, SGST, IGST, total, read by (device, cloud or manual), approved on, and bill id. It starts with a byte-order mark so Excel reads ₹ and Indian names correctly. A text cell that begins with `=`, `+`, `-`, `@`, a tab or a carriage return gets a leading apostrophe so a spreadsheet does not run it as a formula.
+
+**Tally XML.** The same range gives two files, to be imported in this order:
+1. The ledgers file ("masters"). It creates one ledger per supplier under Sundry Creditors (with the GSTIN if valid), plus `Purchases` (Purchase Accounts), `Input CGST`, `Input SGST`, `Input IGST` (Duties & Taxes) and `Round Off` (Indirect Expenses).
+2. The vouchers file: one Purchase voucher per bill, with the supplier credited and the purchase and tax ledgers debited. A gap of up to ₹1 between taxable value plus tax and the total goes to `Round Off`.
+
+Approved bills whose taxable value plus tax differs from the total by more than ₹1 are left out of the Tally files. The export panel lists them. They are still in the CSV.
+
+**The Tally XML has not been imported into a real Tally.** It was written from the format as understood, and nobody has run it. Try it on a test company first.
 
 ## Remote Config keys
 
@@ -104,8 +129,8 @@ Hosting deploys from `web/` with `npm run deploy` (it runs the build, then `fire
 
 Run from `web/`.
 
-- `npm test` runs the unit and component-logic suites with Vitest: 20 files, 211 tests in the last run. They cover config parsing, GSTIN/Aadhaar checksums, shield test vectors, redaction planning, extraction parsing, the checks and score, the router (`processBill`, with fake adapters), route logs and stats, accuracy comparison and summary, the Firebase AI adapter guards, the store adapter, and the rule that the automatic inference modes are not used.
-- `npm run test:rules` runs the Firestore rules tests against the Firebase emulator (needs Java; 1 file, 14 tests in the last run). It covers owner-only reads and writes of shops and bills, users not being able to make themselves admin, and route logs being append-only, owner-only, free of extra keys, type-checked, server-timed and tied to a shop the writer owns. The Storage rules have no automated test.
+- `npm test` runs the unit and component-logic suites with Vitest: 29 files, 294 tests in the last run. They cover config parsing, GSTIN/Aadhaar checksums, shield test vectors, redaction planning, extraction parsing, the checks and score, the router (`processBill`, with fake adapters), route logs and stats, accuracy comparison and summary, the Firebase AI adapter guards, the store adapter, the review logic (bill reader, filters, approval rules), the CSV and Tally XML export, and the rule that the automatic inference modes are not used. There are no React component tests.
+- `npm run test:rules` runs the Firestore rules tests against the Firebase emulator (needs Java; 1 file, 22 tests in the last run). It covers owner-only reads and writes of shops and bills, the review fields (status values, approval only in the owner's own name and at server time, a note on every reject), users not being able to make themselves admin, and route logs being append-only, owner-only, free of extra keys, type-checked, server-timed and tied to a shop the writer owns. The Storage rules have no automated test.
 
 ## Accuracy and leak-check tool
 
@@ -143,9 +168,9 @@ The summary shows device and cloud field accuracy, failed and unsure bills, skip
 
 ## Status
 
-Implemented: Google sign-in and consent screen; client shops; bill upload with the full routing cascade; the on-device and cloud adapters; the privacy shield, redaction and consent preview; result screen with checks, editing and manual entry; saving bills and route logs; the routing dashboard; Remote Config; Firestore and Storage rules with a Firestore rules test suite; the accuracy and leak-check tool.
+Implemented: Google sign-in and consent screen; client shops; bill upload with the full routing cascade; the on-device and cloud adapters; the privacy shield, redaction and consent preview; result screen with checks, editing and manual entry; saving bills and route logs; the routing dashboard; Remote Config; Firestore and Storage rules with a Firestore rules test suite; the accuracy and leak-check tool; the bill inbox with filters; the review screen (approve, approve after the paper-copy tick, reject with a note, reopen); CSV and Tally XML export of approved bills; Firestore rules for the review fields.
 
-**Not yet verified against a real Firebase project or in Chrome:** sign-in, saving to Firestore, the on-device read, the cloud read, the dashboard with live data, the Storage rules (including the image upload), App Check, and the Hosting deploy. Also unverified: Tesseract OCR and the shield on real bill photos (the shield has been exercised only on test vectors), a live Remote Config fetch, deployment of the Firestore composite index, App Check enforcement for AI Logic, and the persistent offline cache. The unit tests use fake adapters, and the rules tests cover only Firestore.
+**Not yet verified against a real Firebase project or in Chrome:** the inbox, the review screen and the export (none of it has been rendered in a browser, and there are no component tests; see `docs/superpowers/2026-11-26-subproject-b-followups.md` for the check list), the Tally XML in a real Tally, sign-in, saving to Firestore, the on-device read, the cloud read, the dashboard with live data, the Storage rules (including the image upload), App Check, and the Hosting deploy. Also unverified: Tesseract OCR and the shield on real bill photos (the shield has been exercised only on test vectors), a live Remote Config fetch, deployment of the Firestore composite index, App Check enforcement for AI Logic, and the persistent offline cache. The unit tests use fake adapters, and the rules tests cover only Firestore.
 
 **Measured accuracy:** not yet measured. To be filled in from the 40-bill run.
 
@@ -154,7 +179,7 @@ Implemented: Google sign-in and consent screen; client shops; bill upload with t
 ## Roadmap
 
 Not in this version:
-- CA review and export: bill inbox and filters, approve/reject, CSV and Tally export.
+- A cross-shop inbox, an "exported" mark on bills, and editable line items on the review screen.
 - Android app: phone OTP, invite codes, offline queue.
 - Loan-ready report (PDF) and a delete-my-data flow.
 

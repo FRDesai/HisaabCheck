@@ -14,8 +14,12 @@ service firebase.storage {
       }
       allow read: if isCaOrOwner();
       allow delete: if request.auth != null && shop().caUid == request.auth.uid;
-      // The owner may only add a new object; replacing a stored photo (of a bill that may since have been reviewed) is the CA's.
-      allow create: if resource == null && isCaOrOwner() && validImage();
+      // Replacing a stored photo (of a bill that may since have been reviewed) is the CA's.
+      // The emulator judges an upload over an existing path as `create` (production may too), so the CA's
+      // replacement must pass here as well; the owner only ever adds a path that holds nothing yet.
+      allow create: if request.auth != null && validImage()
+        && (shop().caUid == request.auth.uid
+            || (resource == null && shop().get('ownerUid', null) == request.auth.uid));
       allow update: if request.auth != null && shop().caUid == request.auth.uid && validImage();
     }
   }

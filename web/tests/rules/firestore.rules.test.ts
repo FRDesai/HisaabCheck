@@ -419,6 +419,8 @@ describe('fix round 1: consent, expiry and review keys', () => {
       await setDoc(doc(f, 'invites/OLDD2345'), { shopId: 's1', caUid: 'alice', createdAt: new Date(Date.now() - 8 * 86400000) });
       await setDoc(doc(f, 'invites/OTHR2345'), { shopId: 'bobshop', caUid: 'bob', createdAt: new Date() });
       await setDoc(doc(f, 'shops/linked'), { caUid: 'alice', shopName: 'L', gstin: '', state: '', storeImages: true, ownerUid: 'ravi', claimedWith: 'WXYZ6789', inviteCode: 'WXYZ6789' });
+      await setDoc(doc(f, 'shops/noinv'), { caUid: 'alice', shopName: 'N', gstin: '', state: '', storeImages: false, ownerUid: 'ravi', claimedWith: 'OLDX2345' });
+      await setDoc(doc(f, 'invites/CAMM2345'), { shopId: 's1', caUid: 'mallory', createdAt: new Date() });
       await setDoc(doc(f, 'shops/linked/bills/rej1'), { status: 'rejected', total: 1, reviewedBy: 'alice', reviewedAt: new Date('2026-11-01'), rejectNote: 'x' });
       await setDoc(doc(f, 'shops/linked/bills/draft1'), { status: 'draft', total: 118 });
     });
@@ -452,7 +454,21 @@ describe('fix round 1: consent, expiry and review keys', () => {
     await assertFails(updateDoc(doc(as('ravi2'), 'shops/linked'), { ownerUid: 'ravi2', claimedWith: 'WXYZ6789' }));
   });
   it('an unlink on a shop with no code to change is refused', async () => {
-    await assertFails(updateDoc(doc(as('alice'), 'shops/noinv'), { ownerUid: deleteField() }));
+    const n = doc(as('alice'), 'shops/noinv');
+    await assertSucceeds(updateDoc(n, { shopName: 'N2' })); // the shop exists and alice may edit it
+    await assertFails(updateDoc(n, { ownerUid: deleteField(), claimedWith: deleteField() }));
+  });
+  it('each conjunct of the CA consent clause is needed', async () => {
+    const un = doc(as('alice'), 'shops/s1');
+    const l = doc(as('alice'), 'shops/linked');
+    await assertFails(updateDoc(un, { ownerUid: 'victim', inviteCode: 'DIFF2345' })); // adds an owner while rotating the code
+    await assertFails(updateDoc(l, { ownerUid: 'victim', claimedWith: deleteField(), inviteCode: 'DIFF2345' })); // names a new owner
+    await assertFails(updateDoc(l, { ownerUid: deleteField(), inviteCode: 'DIFF2345' })); // keeps claimedWith
+    await assertFails(updateDoc(l, { ownerUid: null })); // null instead of removal, code kept
+  });
+  it('an invite of another CA cannot be used to link', async () => {
+    await env.withSecurityRulesDisabled(async (c) => { await updateDoc(doc(c.firestore(), 'shops/s1'), { inviteCode: 'CAMM2345' }); });
+    await assertFails(updateDoc(s1('ravi2'), { ownerUid: 'ravi2', claimedWith: 'CAMM2345' }));
   });
 
   it('linking needs an invite for this shop, no older than 7 days', async () => {

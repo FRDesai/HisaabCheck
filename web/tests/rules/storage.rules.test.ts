@@ -40,9 +40,11 @@ describe('storage rules', () => {
   it('the CA reads, uploads and deletes for their own shop', async () => {
     await assertSucceeds(getBytes(ref(st('alice'), P('img', 'old.jpg'))));
     await assertSucceeds(uploadBytes(ref(st('alice'), P('img', fresh())), small, jpeg));
-    // Not tested here: a CA replacing a stored photo. The emulator evaluates every upload as `create`, so it cannot
-    // reach the `update` rule (see report); in production a replacement is an `update`, which is the CA's.
     await assertSucceeds(deleteObject(ref(st('alice'), P('img', 'old.jpg'))));
+  });
+  it('the CA overwrites an existing object (create or update semantics)', async () => {
+    await assertSucceeds(uploadBytes(ref(st('alice'), P('img', 'old.jpg')), small, jpeg));
+    await assertFails(uploadBytes(ref(st('alice'), P('noimg', 'old.jpg')), small, jpeg));
   });
   it('the CA cannot upload when storeImages is false', async () => {
     await assertFails(uploadBytes(ref(st('alice'), P('noimg', fresh())), small, jpeg));

@@ -77,6 +77,7 @@ service cloud.firestore {
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ownerUid', 'claimedWith'])
             && exists(/databases/$(db)/documents/invites/$(request.resource.data.claimedWith))
             && get(/databases/$(db)/documents/invites/$(request.resource.data.claimedWith)).data.shopId == shopId
+            && get(/databases/$(db)/documents/invites/$(request.resource.data.claimedWith)).data.caUid == resource.data.caUid
             && request.time < get(/databases/$(db)/documents/invites/$(request.resource.data.claimedWith)).data.createdAt + duration.value(7, 'd'));
 
       match /bills/{billId} {

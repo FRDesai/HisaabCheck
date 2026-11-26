@@ -4,6 +4,27 @@
 
 HisaabCheck is a web app for accountants (CAs) in India, with an Android app for their clients, the shop owners (see "Android app" below). A CA picks a client shop, uploads photos of GST bills, and gets the key fields back (supplier, GSTIN, invoice number and date, taxable value, CGST/SGST/IGST, total) with a set of maths checks and a confidence score. The CA then reviews each bill in an inbox, approves it or rejects it with a note, and exports approved bills as CSV or as Tally XML. The bill is read by the AI model built into Chrome (Gemini Nano) first. It goes to cloud Gemini only if the on-device read fails its checks or no on-device model exists, and only after private numbers have been blacked out of the image. The web app is the CA's side; the Android app is the shop owner's side: the owner photographs bills on a phone and they appear in the CA's inbox. It is built for the #BuildHybridAI hackathon on Firebase AI Logic hybrid inference.
 
+## For judges
+
+**What to look at**
+- Hybrid routing with the privacy shield: the device read first, the cloud only on failure, and private numbers blacked out (with a preview when unsure) before any image leaves the device ("How hybrid routing works", "Privacy design").
+- The CA side: the inbox, the review screen (approve, reject with a note, reopen) and the CSV and Tally XML export ("Review and export").
+- The Android owner app: phone sign-in, photographing a bill, the same routing in Kotlin, and the owner seeing the CA's rejection note ("Android app").
+
+**Try it**
+- Hosted web app: not deployed yet
+- Android APK: not published yet
+- Video: not recorded yet
+- Locally, with no Firebase project: `cd web && npm install && npm run dev:emulators` (needs Java). It starts the Auth, Firestore and Storage emulators and the dev server, and the login page offers "Sign in as test CA" buttons. Sign-in, shops, upload, OCR, redaction, review, export and the rules work there. AI calls do not (Remote Config and the AI service cannot be emulated), so every bill that needs a read ends up as manual entry. See "Setup" for details.
+- App Check and its debug tokens are not set up yet. The README's Setup section describes how: register the debug token the browser prints in the Firebase console, and register the Hosting domain on the reCAPTCHA key for a hosted build.
+
+**Test bills.** Six made-up bills are in `docs/test-bills/` (images, sources and a table of what each shows). All personal numbers on them (PAN, phone, Aadhaar, bank account) are invented.
+
+**Verified and not**
+- Verified here: unit tests, rules tests on the emulator, the Kotlin core on the JVM, and one run of the web app against local emulators in headless Chrome.
+- Not verified: any real Firebase project, the cloud read, the on-device AI, and any Android phone or emulator.
+- Details and check lists: `docs/superpowers/2026-11-20-subproject-a-followups.md`, `docs/superpowers/2026-11-26-subproject-b-followups.md`, `docs/superpowers/2026-11-26-subproject-c-followups.md`.
+
 ## How hybrid routing works
 
 The router is `web/src/core/router/processBill.ts`. For each bill it does this, in order:

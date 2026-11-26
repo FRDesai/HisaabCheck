@@ -17,8 +17,9 @@ vi.mock('firebase/firestore', () => ({
   },
   setDoc: m.setDoc, updateDoc: m.updateDoc, serverTimestamp: () => 'TS',
   addDoc: vi.fn(), getDoc: m.getDoc, onSnapshot: vi.fn(), orderBy: vi.fn(), query: vi.fn(), where: vi.fn(), limit: vi.fn(),
+  deleteField: vi.fn(), getDocs: vi.fn(), getCountFromServer: vi.fn(),
 }));
-vi.mock('firebase/storage', () => ({ ref: (_s: unknown, path: string) => ({ path }), uploadBytes: m.uploadBytes }));
+vi.mock('firebase/storage', () => ({ ref: (_s: unknown, path: string) => ({ path }), uploadBytes: m.uploadBytes, getDownloadURL: vi.fn() }));
 
 import { CONSENT_VERSION, recordConsent, saveProcessedBill } from '../../src/adapters/store';
 

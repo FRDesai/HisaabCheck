@@ -1,9 +1,10 @@
 import type { User } from 'firebase/auth';
-import { addDoc, collection, doc, getDoc, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where, limit } from 'firebase/firestore';
-import { ref, uploadBytes } from 'firebase/storage';
+import { addDoc, collection, deleteField, doc, getCountFromServer, getDoc, getDocs, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where, limit } from 'firebase/firestore';
+import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { db, storage } from '../firebase';
 import type { Checks, Extraction, ProcessedBill } from '../core/types';
 import { toRouteLog, type RouteLogDoc } from '../core/router/routeLog';
+import { toBillDoc, type BillDoc } from '../core/review/billDoc';
 
 export const CONSENT_VERSION = '2026-11-v1';
 export type UserDoc = { role: 'ca' | 'admin'; name: string; email: string; consentVersion?: string };
@@ -85,3 +86,66 @@ export function watchRouteLogs(caUid: string, isAdmin: boolean, cb: (logs: Route
                     : query(base, where('caUid', '==', caUid), orderBy('createdAt', 'desc'), limit(ROUTE_LOG_LIMIT));
   return onSnapshot(q, (s) => cb(s.docs.map((d) => d.data() as RouteLogDoc)), (e) => onError?.(e));
 }
+
+// ---- Sub-project B: inbox, review, export ----
+
+export const BILL_PAGE = 300;
+// A bill written offline has no server time yet; 'estimate' gives the local time so it still sorts and shows.
+const SNAP = { serverTimestamps: 'estimate' } as const;
+const billsCol = (shopId: string) => collection(db, 'shops', shopId, 'bills');
+const billRef = (shopId: string, billId: string) => doc(db, 'shops', shopId, 'bills', billId);
+
+export function watchShop(shopId: string, cb: (shop: Shop | null) => void, onError: (e: Error) => void) {
+  return onSnapshot(doc(db, 'shops', shopId),
+    (s) => cb(s.exists() ? ({ id: s.id, ...(s.data() as Omit<Shop, 'id'>) }) : null), onError);
+}
+
+/** Newest bills of a shop, live. Filters run in the browser (core/review/filters). */
+export function watchBills(shopId: string, max: number, cb: (bills: BillDoc[]) => void, onError: (e: Error) => void) {
+  return onSnapshot(query(billsCol(shopId), orderBy('createdAt', 'desc'), limit(max)),
+    (s) => cb(s.docs.map((d) => toBillDoc(d.id, d.data(SNAP)))), onError);
+}
+
+export function watchBill(shopId: string, billId: string, cb: (bill: BillDoc | null) => void, onError: (e: Error) => void) {
+  return onSnapshot(billRef(shopId, billId), (s) => cb(s.exists() ? toBillDoc(s.id, s.data(SNAP)) : null), onError);
+}
+
+export async function countToReview(shopId: string): Promise<number> {
+  const s = await getCountFromServer(query(billsCol(shopId), where('status', 'in', ['draft', 'manual_entry'])));
+  return s.data().count;
+}
+
+/** One-off read for export: every bill dated from..to, any status. Not capped by the inbox page size. */
+export async function fetchBillsByInvoiceDate(shopId: string, from: string, to: string): Promise<BillDoc[]> {
+  const s = await getDocs(query(billsCol(shopId), where('invoiceDate', '>=', from), where('invoiceDate', '<=', to), orderBy('invoiceDate')));
+  return s.docs.map((d) => toBillDoc(d.id, d.data(SNAP)));
+}
+
+/** Bill fields for an update: no undefined values; absent line items are removed from the stored bill. */
+function billFields(e: Extraction) {
+  const { items, itemCount, ...rest } = e;
+  return { ...rest, items: items ?? deleteField(), ...(itemCount === undefined ? {} : { itemCount }) };
+}
+
+export const saveReviewFields = (shopId: string, billId: string, e: Extraction, checks: Checks) =>
+  updateDoc(billRef(shopId, billId), { ...billFields(e), checks, editedAt: serverTimestamp() });
+
+/** Fields and approval in one write, so what is approved is exactly what was on screen. */
+export const approveBill = (shopId: string, billId: string, uid: string, e: Extraction, checks: Checks, failed: string[]) =>
+  updateDoc(billRef(shopId, billId), {
+    ...billFields(e), checks, status: 'approved', reviewedBy: uid, reviewedAt: serverTimestamp(), rejectNote: deleteField(),
+    approvedWithFailedChecks: failed.length > 0 ? failed : deleteField(), editedAt: serverTimestamp(),
+  });
+
+export const rejectBill = (shopId: string, billId: string, uid: string, note: string) =>
+  updateDoc(billRef(shopId, billId), {
+    status: 'rejected', reviewedBy: uid, reviewedAt: serverTimestamp(), rejectNote: note.trim(), approvedWithFailedChecks: deleteField(),
+  });
+
+export const reopenBill = (shopId: string, billId: string) =>
+  updateDoc(billRef(shopId, billId), {
+    status: 'draft', reviewedBy: deleteField(), reviewedAt: deleteField(), rejectNote: deleteField(), approvedWithFailedChecks: deleteField(),
+  });
+
+/** Download URL of the stored (redacted) bill photo. Storage rules allow it only for the shop's CA. */
+export const billImageUrl = (imagePath: string) => getDownloadURL(ref(storage, imagePath));

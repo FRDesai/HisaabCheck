@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -48,16 +49,21 @@ fun HisaabCheckTheme(content: @Composable () -> Unit) {
 @Composable
 fun AppRoot(firebaseReady: Boolean) {
     Surface(modifier = Modifier.fillMaxSize()) {
-        if (!firebaseReady) {
-            // SessionViewModel is never created here: its constructor calls FirebaseAuth.getInstance().
-            Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-                Text(
-                    text = "Firebase is not set up. Add google-services.json and rebuild.",
-                    style = MaterialTheme.typography.bodyLarge,
-                )
+        // The background runs under the system bars; every screen's content is kept clear of the status bar,
+        // navigation bar, display cutout and keyboard here, once. The padding consumes those insets, so a screen's own
+        // imePadding() adds nothing on top of it.
+        Box(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
+            if (!firebaseReady) {
+                // SessionViewModel is never created here: its constructor calls FirebaseAuth.getInstance().
+                Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "Firebase is not set up. Add google-services.json and rebuild.",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                }
+            } else {
+                SessionRoot()
             }
-        } else {
-            SessionRoot()
         }
     }
 }

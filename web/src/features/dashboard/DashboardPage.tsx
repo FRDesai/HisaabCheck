@@ -65,14 +65,15 @@ export default function DashboardPage() {
         <p className="bg-white rounded-lg border p-6 text-slate-600">No bills processed yet</p>
       ) : (
         <>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Tile label="Read on device" value={`${s.devicePct}%`} tone="text-emerald-700" caption={`${s.readOnDevice} of ${s.total} bills`} />
             <Tile label="Read in cloud" value={`${s.cloud}`} caption={`${s.cloud} of ${s.total} bills`} />
             <Tile label="Saved for manual entry" value={`${s.manual}`} caption={`${s.manual} of ${s.total} bills`} />
             <Tile label="Private numbers hidden before sending" value={`${s.piiTotal}`} caption={`Across ${s.sentToCloud} bills sent to cloud`} />
-            <Tile label="Raw private numbers sent to cloud" value="0" tone="text-emerald-700"
-              caption="By design: production builds send only redacted images. Verified by the redaction leak check." />
           </div>
+          <p className="text-sm text-slate-600">
+            Private numbers are hidden on this device before any bill goes to the cloud. This page counts what was hidden; it cannot count what the shield missed.
+          </p>
           <p className="text-sm text-slate-600">
             Estimated cloud cost ${s.costUsd.toFixed(4)} · estimated saved vs all-cloud ${s.savedUsd.toFixed(4)} · {s.total} bills
           </p>

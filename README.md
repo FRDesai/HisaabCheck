@@ -103,6 +103,8 @@ Approved bills are left out of the Tally files if taxable value plus tax differs
 
 **The Tally XML has not been imported into a real Tally.** It was written from the format as understood, and nobody has run it. Try it on a test company first.
 
+**Business Health Report.** The export panel has a "Business Health Report" link that opens a one-page report for the shop and the panel's date range (`/shops/<id>/report?from=…&to=…`; without dates it covers the last six calendar months up to the current month). It uses the same bills as the export: approved bills by invoice date, both ends included, read from the server only, so it needs a connection. It shows the purchase value and bill count for each month, the top 5 suppliers (grouped by GSTIN when it is valid, otherwise by name) with their share, CGST, SGST, IGST, taxable value and total purchases, and how many bills were approved, how many of those after the paper-copy tick, and how many dated bills are not approved and left out. The CA prints it, or saves it as a PDF, with the browser's print dialog. It says "Prepared from bills approved by" the CA, not "Verified by CA", and its footer says the figures come from bills recorded in HisaabCheck and are not an audited statement. Reports are not stored, and the shop owner cannot download them. It has been viewed only against the local emulators, in headless Chrome, where a six-month report printed on one A4 page.
+
 ## Remote Config keys
 
 Defaults are in `web/src/core/config/defaults.ts` and `firebase/remoteconfig.template.json`. If Remote Config cannot be fetched, the defaults are used.
@@ -230,7 +232,7 @@ cd android
 
 ## Status
 
-Implemented: Google sign-in and consent screen; client shops; bill upload with the full routing cascade; the on-device and cloud adapters; the privacy shield, redaction and consent preview; result screen with checks, editing and manual entry; saving bills and route logs; the routing dashboard; Remote Config; Firestore and Storage rules with a Firestore rules test suite; the accuracy and leak-check tool; the bill inbox with filters; the review screen (approve, approve after the paper-copy tick, reject with a note, reopen); CSV and Tally XML export of approved bills; Firestore rules for the review fields; the invite-code flow for linking a shop owner; the Android app (phone sign-in, consent, link, capture, the full routing cascade in Kotlin, preview, result and editing, saving bills and route logs) with its Kotlin core and its Firestore and Storage rules, compiled and tested on the JVM only (see "Android app").
+Implemented: Google sign-in and consent screen; client shops; bill upload with the full routing cascade; the on-device and cloud adapters; the privacy shield, redaction and consent preview; result screen with checks, editing and manual entry; saving bills and route logs; the routing dashboard; Remote Config; Firestore and Storage rules with a Firestore rules test suite; the accuracy and leak-check tool; the bill inbox with filters; the review screen (approve, approve after the paper-copy tick, reject with a note, reopen); CSV and Tally XML export of approved bills; the Business Health Report (printed to PDF from the browser); Firestore rules for the review fields; the invite-code flow for linking a shop owner; the Android app (phone sign-in, consent, link, capture, the full routing cascade in Kotlin, preview, result and editing, saving bills and route logs) with its Kotlin core and its Firestore and Storage rules, compiled and tested on the JVM only (see "Android app").
 
 **Not yet verified against a real Firebase project:** nothing has been run against one. The web app has been run once, against the local emulators (emulator mode) in headless Chrome. That first real run found a bank-account number that the redaction let through, which was then fixed. It used the emulators only: the cloud read and the on-device AI have never been exercised. There are no component tests; see `docs/superpowers/2026-11-26-subproject-b-followups.md` for the check list. Still unverified: the Tally XML in a real Tally, sign-in with Google, saving to the real Firestore, the on-device read, the cloud read, the dashboard with live data, the Storage rules (including the image upload), App Check, and the Hosting deploy. Also unverified: Tesseract OCR and the shield on real bill photos (the shield has been exercised only on test vectors), a live Remote Config fetch, deployment of the Firestore composite index, App Check enforcement for AI Logic, and the persistent offline cache. The unit tests use fake adapters. The rules tests run on the emulator, not on the deployed rules.
 
@@ -245,7 +247,7 @@ Implemented: Google sign-in and consent screen; client shops; bill upload with t
 Not in this version:
 - A cross-shop inbox, an "exported" mark on bills, and editable line items on the review screen.
 - Android: running and testing it on real phones; an offline queue beyond what the Firestore SDK's cache gives; a CA-side unlink button; an iOS app.
-- Loan-ready report (PDF) and a delete-my-data flow.
+- A delete-my-data flow.
 
 ## License
 

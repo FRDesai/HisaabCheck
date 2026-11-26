@@ -1,3 +1,27 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Print: used by the Business Health Report (features/report). */
+@media print {
+  @page { size: A4 portrait; margin: 12mm; }
+  html, body, body * { background: #fff !important; color: #000 !important; box-shadow: none !important; }
+  .no-print, div:has(> main) > header { display: none !important; }
+  main { padding: 0 !important; }
+  div:has(> main) { min-height: 0 !important; }
+  .report-page { border: 0 !important; padding: 0 !important; max-width: none !important; font-size: 10pt; }
+  .report-page > * + * { margin-top: 10pt !important; }
+  .report-page h1 { font-size: 16pt !important; }
+  .report-page h2 { font-size: 12pt !important; margin-bottom: 3pt !important; }
+  .report-page table { font-size: 9.5pt !important; }
+  .report-page th, .report-page td { padding: 2.5pt 5pt !important; }
+  .report-page tr { border-color: #bbb !important; }
+  /* Firebase's dev-only emulator notice is position: fixed and would cover the page bottom; print it once, in the flow. */
+  .firebase-emulator-warning { position: static !important; }
+  .report-page .report-bar-track { background: #e5e5e5 !important; border: 1px solid #999; }
+  .report-page .report-bar { background: #333 !important; }
+  .report-page, .report-page * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .report-row, .report-block h2 { break-inside: avoid; page-break-inside: avoid; }
+  .report-block h2 { break-after: avoid; page-break-after: avoid; }
+  .report-grid { display: grid !important; grid-template-columns: 1fr 1fr !important; }
+}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { fetchBillsByInvoiceDate, type Shop } from '../../adapters/store';
 import { isIsoDate, istMonth, monthRange } from '../../core/dates';
 import { toCsv } from '../../core/export/csv';
@@ -49,6 +50,7 @@ export default function ExportPanel({ shop, month, refreshKey }: { shop: Shop; m
           onClick={() => downloadText(`${name}-tally-1-masters.xml`, 'application/xml;charset=utf-8', toTallyMastersXml(tally.ok))}>Tally XML: 1. ledgers</button>
         <button type="button" className="px-4 py-2 rounded-lg border disabled:opacity-50" disabled={tally.ok.length === 0}
           onClick={() => downloadText(`${name}-tally-2-vouchers.xml`, 'application/xml;charset=utf-8', toTallyVouchersXml(tally.ok))}>Tally XML: 2. vouchers</button>
+        {rangeOk && <Link className="px-4 py-2 rounded-lg border underline" to={`/shops/${shop.id}/report?from=${from}&to=${to}`}>Business Health Report</Link>}
       </div>
       {!rangeOk && <p role="alert" className="text-sm text-red-700">Choose a From date that is on or before the To date.</p>}
       {state === 'loading' && <p role="status" className="text-sm text-slate-600">Counting bills…</p>}

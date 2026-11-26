@@ -9,7 +9,6 @@ import com.hisaabcheck.core.shield.jsIsFinite
 import com.hisaabcheck.core.shield.jsNumber
 import com.hisaabcheck.core.shield.jsNumberToString
 import com.hisaabcheck.core.shield.jsTrim
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -18,9 +17,7 @@ import kotlinx.serialization.json.JsonPrimitive
 
 // Port of web/src/core/extract/parse.ts. Number(), String(number), trim() and \s are JavaScript's (see JsSemantics.kt).
 
-private val json = Json { isLenient = false }
-
-/** A JSON number (kotlinx keeps its literal text; the strict check below guarantees the JSON number grammar). */
+/** A JSON number. parseJson stores numbers as JsonPrimitive(Double), whose content Double.toString round-trips. */
 private fun JsonElement?.jsonNumber(): Double? =
     if (this is JsonPrimitive && this !is JsonNull && !isString && content != "true" && content != "false") content.toDouble() else null
 
@@ -53,11 +50,9 @@ fun parseExtraction(raw: String): Extraction? {
     val end = raw.lastIndexOf('}')
     if (start < 0 || end <= start) return null
     val body = raw.substring(start, end + 1).replace(TRAILING_COMMA, "\$1")
-    // JSON.parse accepts exactly the JSON grammar; kotlinx also reads unquoted literals leniently (01, +1, abc),
-    // so the text is checked against the grammar first.
-    if (!isStrictJson(body)) return null
-    val o = try { json.parseToJsonElement(body) } catch (_: Exception) { return null }
-    if (o !is JsonObject) return null
+    // JSON.parse, not kotlinx: kotlinx reads unquoted literals leniently even in strict mode (01, +1, abc) and refuses
+    // nesting deeper than its limit, while JSON.parse accepts exactly the JSON grammar at any depth.
+    val o = parseJson(body) as? JsonObject ?: return null
     val rawItems = o["items"]
     val items = if (rawItems is JsonArray) {
         rawItems.filterIsInstance<JsonObject>().map { it ->
@@ -77,86 +72,109 @@ fun parseExtraction(raw: String): Extraction? {
     )
 }
 
-/** True when [s] is one JSON text exactly as JSON.parse accepts it (ECMA-404). Iterative, so deep nesting is fine. */
-internal fun isStrictJson(s: String): Boolean {
+/**
+ * JSON.parse: the JSON text [s] as a JsonElement, or null where JSON.parse throws (ECMA-404 grammar exactly; whitespace
+ * is only space, tab, LF and CR). Iterative, so any nesting depth is fine. A duplicate key keeps the last value.
+ */
+internal fun parseJson(s: String): JsonElement? {
     var i = 0
     val n = s.length
     fun ws() { while (i < n && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r')) i++ }
-    fun isHex(c: Char) = c in '0'..'9' || c in 'a'..'f' || c in 'A'..'F'
-    fun string(): Boolean { // at '"'
+    fun hex(c: Char): Int = when (c) { in '0'..'9' -> c - '0'; in 'a'..'f' -> c - 'a' + 10; in 'A'..'F' -> c - 'A' + 10; else -> -1 }
+    fun string(): String? { // at '"'
         i++
+        val out = StringBuilder()
         while (i < n) {
             val c = s[i]
             when {
-                c == '"' -> { i++; return true }
+                c == '"' -> { i++; return out.toString() }
                 c == '\\' -> {
-                    if (i + 1 >= n) return false
-                    val e = s[i + 1]
-                    if (e == 'u') {
-                        if (i + 5 >= n || !(1..4).all { isHex(s[i + 1 + it]) }) return false
-                        i += 6
-                    } else if (e in "\"\\/bfnrt") i += 2 else return false
+                    if (i + 1 >= n) return null
+                    when (val e = s[i + 1]) {
+                        '"', '\\', '/' -> { out.append(e); i += 2 }
+                        'b' -> { out.append('\b'); i += 2 }
+                        'f' -> { out.append('\u000C'); i += 2 }
+                        'n' -> { out.append('\n'); i += 2 }
+                        'r' -> { out.append('\r'); i += 2 }
+                        't' -> { out.append('\t'); i += 2 }
+                        'u' -> {
+                            if (i + 5 >= n) return null
+                            var code = 0
+                            for (k in 2..5) { val h = hex(s[i + k]); if (h < 0) return null; code = code * 16 + h }
+                            out.append(code.toChar()) // lone surrogates are kept, as in JavaScript
+                            i += 6
+                        }
+                        else -> return null
+                    }
                 }
-                c < ' ' -> return false
-                else -> i++
+                c < ' ' -> return null
+                else -> { out.append(c); i++ }
             }
         }
-        return false
+        return null
     }
     fun digits(): Boolean { val from = i; while (i < n && s[i] in '0'..'9') i++; return i > from }
-    fun number(): Boolean {
+    fun number(): Double? {
+        val from = i
         if (i < n && s[i] == '-') i++
-        if (i < n && s[i] == '0') i++ else if (!(i < n && s[i] in '1'..'9' && digits())) return false
-        if (i < n && s[i] == '.') { i++; if (!digits()) return false }
-        if (i < n && (s[i] == 'e' || s[i] == 'E')) { i++; if (i < n && (s[i] == '+' || s[i] == '-')) i++; if (!digits()) return false }
-        return true
+        if (i < n && s[i] == '0') i++ else if (!(i < n && s[i] in '1'..'9' && digits())) return null
+        if (i < n && s[i] == '.') { i++; if (!digits()) return null }
+        if (i < n && (s[i] == 'e' || s[i] == 'E')) { i++; if (i < n && (s[i] == '+' || s[i] == '-')) i++; if (!digits()) return null }
+        return s.substring(from, i).toDouble() // a JSON number literal parses the same in Java and JavaScript (correctly rounded)
     }
     fun literal(w: String): Boolean = s.startsWith(w, i).also { if (it) i += w.length }
-    val stack = ArrayDeque<Char>()
+
+    class Container(val obj: LinkedHashMap<String, JsonElement>?, val arr: MutableList<JsonElement>?) { var key = "" }
+    val stack = ArrayDeque<Container>()
 
     // Reads `"key" :` inside an object; leaves i at the start of the value.
-    fun key(): Boolean {
-        ws(); if (i >= n || s[i] != '"' || !string()) return false
+    fun key(c: Container): Boolean {
+        ws(); if (i >= n || s[i] != '"') return false
+        c.key = string() ?: return false
         ws(); if (i >= n || s[i] != ':') return false
         i++; return true
     }
 
-    ws()
     while (true) {
         // A value is expected at i.
         ws()
-        if (i >= n) return false
-        var scalarDone = true
+        if (i >= n) return null
+        var value: JsonElement? = null
         when (s[i]) {
             '{' -> {
                 i++; ws()
-                if (i < n && s[i] == '}') i++ else { stack.addLast('{'); if (!key()) return false; scalarDone = false }
+                if (i < n && s[i] == '}') { i++; value = JsonObject(emptyMap()) } else {
+                    val c = Container(LinkedHashMap(), null); stack.addLast(c); if (!key(c)) return null
+                }
             }
             '[' -> {
                 i++; ws()
-                if (i < n && s[i] == ']') i++ else { stack.addLast('['); scalarDone = false }
+                if (i < n && s[i] == ']') { i++; value = JsonArray(emptyList()) } else stack.addLast(Container(null, mutableListOf()))
             }
-            '"' -> if (!string()) return false
-            't' -> if (!literal("true")) return false
-            'f' -> if (!literal("false")) return false
-            'n' -> if (!literal("null")) return false
-            else -> if (!number()) return false
+            '"' -> value = JsonPrimitive(string() ?: return null)
+            't' -> { if (!literal("true")) return null; value = JsonPrimitive(true) }
+            'f' -> { if (!literal("false")) return null; value = JsonPrimitive(false) }
+            'n' -> { if (!literal("null")) return null; value = JsonNull }
+            else -> value = JsonPrimitive(number() ?: return null)
         }
-        if (!scalarDone) continue
-        // A value just ended: close containers or move to the next element.
+        if (value == null) continue // a container was opened
+        // A value just ended: store it, then close containers or move to the next element.
+        var v: JsonElement = value
         while (true) {
+            val top = stack.lastOrNull()
+            if (top == null) { ws(); return if (i == n) v else null }
+            if (top.obj != null) top.obj[top.key] = v else top.arr!!.add(v)
             ws()
-            if (stack.isEmpty()) return i == n
-            if (i >= n) return false
-            val top = stack.last()
+            if (i >= n) return null
             val c = s[i]
             if (c == ',') {
                 i++
-                if (top == '{' && !key()) return false
+                if (top.obj != null && !key(top)) return null
                 break
             }
-            if ((top == '{' && c == '}') || (top == '[' && c == ']')) { i++; stack.removeLast(); continue }
-            return false
+            if (top.obj != null && c == '}') { i++; stack.removeLast(); v = JsonObject(top.obj); continue }
+            if (top.arr != null && c == ']') { i++; stack.removeLast(); v = JsonArray(top.arr); continue }
+            return null
         }
     }
 }

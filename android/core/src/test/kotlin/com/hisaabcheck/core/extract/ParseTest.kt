@@ -70,7 +70,7 @@ class ParseTest {
         assertDoesNotThrow { parseExtraction("{\"total\":5,\"items\":[\"Rice\"]}") }
         val e = parseExtraction("{\"total\":5,\"items\":[\"Rice\", {\"description\":\"Dal\",\"amount\":\"10\"}]}")!!
         assertEquals(1, e.items!!.size)
-        assertEquals(LineItem("Dal", "", 0.0, 0.0, 10.0), e.items!![0])
+        assertEquals(LineItem("Dal", "", 0.0, 0.0, 10.0), e.items[0])
     }
 
     @Test

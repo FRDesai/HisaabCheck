@@ -17,7 +17,6 @@ import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.time.Instant
@@ -127,7 +126,9 @@ class DifferentialTest {
                 same(jsNum(e.getValue("confidenceThreshold")), got.confidenceThreshold) &&
                 same(jsNum(e.getValue("consentOcrThreshold")), got.consentOcrThreshold) &&
                 same(jsNum(e.getValue("totalToleranceInr")), got.totalToleranceInr) &&
-                same(jsNum(e.getValue("maxDeviceLineItems")), got.maxDeviceLineItems.toDouble()) &&
+                // Config.maxDeviceLineItems is an Int (the Task 1 contract), which has no -0: compare numerically (-0 == 0).
+                // Nothing observes the sign: the prompt prints `${-0}` as "0" and comparisons treat -0 as 0.
+                jsNum(e.getValue("maxDeviceLineItems")) == got.maxDeviceLineItems.toDouble() &&
                 e.getValue("cloudModel").jsonPrimitive.content == got.cloudModel &&
                 e.getValue("extractionPromptVersion").jsonPrimitive.content == got.extractionPromptVersion &&
                 e.getValue("maskPii").jsonPrimitive.boolean == got.maskPii

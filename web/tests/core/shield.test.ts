@@ -47,3 +47,46 @@ describe('runShield vectors', () => {
   });
 });
 
+describe('runShield long digit runs (bank accounts without a recognised label)', () => {
+  const word = (text: string, confidence: number, x: number) => ({ text, confidence, line: 0, bbox: { x0: x, y0: 0, x1: x + text.length * 10, y1: 16 } });
+  it('hides the account in the exact OCR reading from the first real run', () => {
+    // Tesseract read "A/C No: 50100234567891" as AJC (92), No: (93), 50100234567891 (92).
+    const r = runShield([word('AJC', 92, 0), word('No:', 93, 40), word('50100234567891', 92, 80)], 0.6);
+    expect(r.matches).toEqual([{ type: 'BANK_ACCOUNT', wordIndexes: [2] }]);
+    expect(r.uncertain).toBe(false);
+  });
+  it('hides a grouped unlabelled account as one match over every group', () => {
+    const r = runShield(wordsFromLines(['Beneficiary 5010 0234 5678 91']), 0.6);
+    expect(r.matches).toEqual([{ type: 'POSSIBLE_ID', wordIndexes: [1, 2, 3, 4] }]);
+  });
+  it('never redacts a GSTIN next to a long digit run', () => {
+    const r = runShield(wordsFromLines(['GSTIN 27AAPFU0939F1ZV 50100234567891']), 0.6);
+    expect(r.gstinWordIndexes).toEqual([1]);
+    expect(r.matches).toEqual([{ type: 'POSSIBLE_ID', wordIndexes: [2] }]);
+  });
+  it('does not count a run twice when an exact matcher already claimed it', () => {
+    expect(runShield(wordsFromLines(['A/c No: 50100234567891']), 0.6).matches).toEqual([{ type: 'BANK_ACCOUNT', wordIndexes: [2] }]);
+    expect(runShield(wordsFromLines(['Mob: 98450 12345']), 0.6).matches).toEqual([{ type: 'PHONE', wordIndexes: [1, 2] }]);
+  });
+  it('a hidden long run between a label and its value still means the value may have been missed', () => {
+    const r = runShield(wordsFromLines(['PAN: 101002345678 AAPFU0939F']), 0.6);
+    expect(r.matches.map((m) => m.type)).toEqual(['PAN', 'POSSIBLE_ID']);
+    expect(r.uncertainReasons).toEqual(['label_without_value:0']);
+  });
+  it('asks the human when unclaimed pieces of one digit run hold 9 or more digits', () => {
+    const r = runShield(wordsFromLines(['Beneficiary 50100 2 34567891']), 0.6);
+    expect(r.matches).toEqual([]);
+    expect(r.uncertainReasons).toEqual(['long_digit_run:0']);
+  });
+  it('does not ask for a short leftover next to a hidden run', () => {
+    const r = runShield(wordsFromLines(['Ref 2341 2341 2340 5']), 0.6);
+    expect(r.matches).toEqual([{ type: 'POSSIBLE_ID', wordIndexes: [1, 2, 3] }]);
+    expect(r.uncertain).toBe(false);
+  });
+  it('leaves amounts, dates and times alone', () => {
+    for (const line of ['Total 50100234567.00', 'Total 1,23,45,678.00', 'Date: 02-11-2026 10:30', 'Amount 5010023456,78']) {
+      const r = runShield(wordsFromLines([line]), 0.6);
+      expect([line, r.matches, r.uncertain]).toEqual([line, [], false]);
+    }
+  });
+});

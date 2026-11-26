@@ -26,6 +26,20 @@ const IFSC = /\b[A-Z]{4}0[A-Z0-9]{6}\b/g;
 const MOBILE = /(?<!\d)(?:\+?91[\s-]?|0)?[6-9]\d{4}[\s-]?\d{5}(?!\d)/g;
 const LANDLINE = /\b0\d{2,4}[\s-]?\d{3,4}[\s-]?\d{4}\b/g;
 const BANK = /\b\d(?:[\s-]?\d){8,17}\b/g;
+// Aadhaar-shaped but failing Verhoeff, and not a piece of a longer digit run (that is left whole to LONG_RUN).
+const NEAR_AADHAAR = /(?<!\d[\s-]?)\b[2-9]\d{3}[\s-]?\d{4}[\s-]?\d{4}\b(?![\s-]?\d)/g;
+/*
+ * A digit run that may be a bank account even though no label was read (OCR mangles labels: "A/C" came back as "AJC").
+ * Contiguous digits, or groups of at least 3 digits (the last may have 2) joined by one space or hyphen; 9 to 18 digits
+ * in all (checked in code). Letters may touch it. Not a money value or a time: no digit followed by ".", "," or ":"
+ * just before it, and no ".", "," or ":" followed by a digit just after it.
+ */
+const LONG_RUN = /(?<!\d|\d[.,:])\d{3,}(?:[\s-]\d{3,})*(?:[\s-]\d{2})?(?!\d|[.,:]\d)/g;
+/** The same edges, any grouping (the separators BANK tolerates): a run OCR may have split in pieces LONG_RUN does not accept. */
+const LOOSE_RUN = /(?<!\d|\d[.,:])\d(?:[\s-]?\d){8,17}(?!\d|[.,:]\d)/g;
+const MIN_RUN_DIGITS = 9;
+const MAX_RUN_DIGITS = 18;
+const digitCount = (t: string) => t.replace(/\D/g, '').length;
 const NEAR_PAN = /\b[A-Z0-9]{10}\b/g;
 // Digit look-alikes, used to un-confuse OCR misreads.
 const TO_DIGIT: Record<string, string> = { O: '0', I: '1', L: '1', S: '5', B: '8', Z: '2' };
@@ -40,7 +54,8 @@ const LABELS: Record<LabelledType, RegExp> = {
   AADHAAR: /\bAADHAA?R\b/g,
   IFSC: /\bIFSC\b/g,
   PHONE: /\b(?:MOB(?:ILE)?|PH(?:ONE)?|TEL|CELL|CONTACT)\b/g,
-  BANK_ACCOUNT: /\bACC(?:OUNT|T)?\.?\s*(?:NO|NUMBER)\b|\bACC\s*#|\bACCOUNT\b|\bACCT\b|\bA\/C(?:\s*(?:NO|NUMBER)\b)?|\bAC\s*NO\b/g,
+  // A/C also as OCR reads it: the slash as | \ 1 I J L ! 7 (lower-case l is upper-cased to L before matching).
+  BANK_ACCOUNT: /\bACC(?:OUNT|T)?\.?\s*(?:NO|NUMBER)\b|\bACC\s*#|\bACCOUNT\b|\bACCT\b|\bA\/C(?:\s*(?:NO|NUMBER)\b)?|\bA[|\\1IJL!7]C\b(?:\s*(?:NO|NUMBER)\b)?|\b(?:AC|CA)\s*NO\b/g,
 };
 const PARTIAL = /\b[A-Z]{5}\d{1,3}\b/;
 const PII_LIKE = /\d{3,}|[A-Z]{3,}\d/;
@@ -80,10 +95,13 @@ export function runShield(words: OcrWord[], consentOcrThreshold: number): Shield
   const matches: PiiMatch[] = [];
   // kind: which label a match can satisfy. Exact matches use their own type; a POSSIBLE_ID uses the type it nearly is.
   const meta: Array<{ kind: LabelledType; li: number; start: number }> = [];
+  // Words hidden only because they are a long digit run: for label checks they still count as a possibly missed value.
+  const longRunWords = new Set<number>();
   const reasons: string[] = [];
 
   // `searchText`, if given, is a same-length transform of the line (look-alike swaps); `ok` gets the ORIGINAL text.
-  const find = (li: number, re: RegExp, type: PiiType, kind: LabelledType, ok: (m: string) => boolean = () => true, searchText?: string) => {
+  const find = (li: number, re: RegExp, type: PiiType, kind: LabelledType, ok: (m: string) => boolean = () => true, searchText?: string): number[] => {
+    const found: number[] = [];
     const line = lines[li];
     for (const m of (searchText ?? line.text).matchAll(new RegExp(re.source, 'g'))) {
       const idx = wordsIn(line, m.index!, m.index! + m[0].length);
@@ -92,7 +110,9 @@ export function runShield(words: OcrWord[], consentOcrThreshold: number): Shield
       idx.forEach((i) => claimed.add(i));
       matches.push({ type, wordIndexes: idx });
       meta.push({ kind, li, start: m.index! });
+      found.push(...idx);
     }
+    return found;
   };
 
   lines.forEach((line) => {
@@ -110,15 +130,19 @@ export function runShield(words: OcrWord[], consentOcrThreshold: number): Shield
     if (hasLabel(line.text, 'PHONE')) find(li, LANDLINE, 'PHONE', 'PHONE');
     if (hasLabel(line.text, 'BANK_ACCOUNT') || hasLabel(prev, 'BANK_ACCOUNT')) find(li, BANK, 'BANK_ACCOUNT', 'BANK_ACCOUNT');
     // Near-misses, after every exact matcher so a real type always wins. Over-redaction is harmless; a miss is a leak.
-    find(li, AADHAAR, 'POSSIBLE_ID', 'AADHAAR'); // Aadhaar-shaped but failing Verhoeff (valid ones were claimed above)
+    find(li, NEAR_AADHAAR, 'POSSIBLE_ID', 'AADHAAR'); // Aadhaar-shaped but failing Verhoeff (valid ones were claimed above)
     find(li, NEAR_PAN, 'POSSIBLE_ID', 'PAN', isNearPan);
     find(li, MOBILE, 'POSSIBLE_ID', 'PHONE', isNearMobile, toDigits(line.text));
+    // Last: any other run that could be a bank account is hidden too. A miss is a leak; this only hides a reference
+    // number or two from the model, and the maths checks never use such numbers.
+    const n = (t: string) => digitCount(t) >= MIN_RUN_DIGITS && digitCount(t) <= MAX_RUN_DIGITS;
+    find(li, LONG_RUN, 'POSSIBLE_ID', 'BANK_ACCOUNT', n).forEach((i) => longRunWords.add(i));
   });
 
   const nearMissWords = new Set(matches.filter((m) => m.type === 'POSSIBLE_ID').flatMap((m) => m.wordIndexes));
   // Unclaimed digit-bearing words of line `li` whose span lies within [from, to): something that may be a missed value.
   const suspiciousIn = (li: number, from: number, to: number) => (lines[li]?.spans ?? []).some((s) =>
-    s.start >= from && s.end <= to && !claimed.has(s.word) && SUSPICIOUS(lines[li].text.slice(s.start, s.end)));
+    s.start >= from && s.end <= to && (!claimed.has(s.word) || longRunWords.has(s.word)) && SUSPICIOUS(lines[li].text.slice(s.start, s.end)));
 
   lines.forEach((line, li) => {
     // Each label occurrence needs its own value of the SAME kind, after it on the line or on the next line, and that
@@ -135,6 +159,14 @@ export function runShield(words: OcrWord[], consentOcrThreshold: number): Shield
           || (last && m.li === li + 1 && !suspiciousIn(li, from, Infinity) && !suspiciousIn(li + 1, 0, m.start))));
         if (!ok) reasons.push(`label_without_value:${li}`);
       });
+    }
+    // A digit run whose visible (unclaimed, non-GSTIN) pieces still hold enough digits to be an account number.
+    for (const m of line.text.matchAll(new RegExp(LOOSE_RUN.source, 'g'))) {
+      const from = m.index!;
+      const to = from + m[0].length;
+      const visible = line.spans.filter((s) => s.start < to && s.end > from && !claimed.has(s.word) && !gstinWords.has(s.word))
+        .reduce((sum, s) => sum + digitCount(line.text.slice(Math.max(s.start, from), Math.min(s.end, to))), 0);
+      if (visible >= MIN_RUN_DIGITS) reasons.push(`long_digit_run:${li}`);
     }
     for (const s of line.spans) {
       // A near-miss is hidden, but a low-confidence read of it still asks the human (it may be something else).

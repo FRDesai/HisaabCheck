@@ -98,6 +98,10 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
      */
     val confirmSignOut: StateFlow<Boolean> = _confirmSignOut.asStateFlow()
 
+    private val _signingOut = MutableStateFlow(false)
+    /** True while [signOut] waits (up to 5 seconds) for unsent changes; the sign-out buttons show progress and are disabled. */
+    val signingOut: StateFlow<Boolean> = _signingOut.asStateFlow()
+
     private val authListener = FirebaseAuth.AuthStateListener { onUser(it.currentUser) }
 
     /** Holds no Activity or Composable. */
@@ -222,11 +226,16 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
      */
     fun signOut() {
         if (signOutJob?.isActive == true) return
+        _signingOut.value = true
         signOutJob = viewModelScope.launch {
-            val settled = withTimeoutOrNull(PENDING_WAIT_MS) {
-                try { Firebase.firestore.waitForPendingWrites().awaitTask(); true } catch (e: CancellationException) { throw e } catch (e: Exception) { false }
-            } ?: false
-            if (settled) endSession() else _confirmSignOut.value = true
+            try {
+                val settled = withTimeoutOrNull(PENDING_WAIT_MS) {
+                    try { Firebase.firestore.waitForPendingWrites().awaitTask(); true } catch (e: CancellationException) { throw e } catch (e: Exception) { false }
+                } ?: false
+                if (settled) endSession() else _confirmSignOut.value = true
+            } finally {
+                _signingOut.value = false
+            }
         }
     }
 
@@ -342,6 +351,8 @@ class SessionViewModel(private val store: SessionStore = SessionStore()) : ViewM
             if (activeUid != null) wipePending = true // a signed-in user went away, however it happened
             activeUid = null
             _loadError.value = null
+            _confirmSignOut.value = false // the session ended by itself: a dialog about its unsent changes is moot
+            _signingOut.value = false
             _state.value = SessionState.SignedOut
             _ui.update { SessionUi() }
             verificationId = null

@@ -29,6 +29,7 @@ import com.hisaabcheck.app.session.SessionViewModel
 @Composable
 fun ConsentScreen(vm: SessionViewModel) {
     val ui by vm.ui.collectAsState()
+    val signingOut by vm.signingOut.collectAsState()
     val buttonModifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
@@ -50,6 +51,6 @@ fun ConsentScreen(vm: SessionViewModel) {
         Button(onClick = { vm.agree() }, enabled = !ui.busy, modifier = buttonModifier) {
             Text(if (ui.busy) "Saving..." else "I agree")
         }
-        OutlinedButton(onClick = { vm.signOut() }, enabled = !ui.busy, modifier = buttonModifier) { Text("Sign out") }
+        OutlinedButton(onClick = { vm.signOut() }, enabled = !ui.busy && !signingOut, modifier = buttonModifier) { SignOutLabel(signingOut) }
     }
 }

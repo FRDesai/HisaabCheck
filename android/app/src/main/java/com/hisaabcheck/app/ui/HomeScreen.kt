@@ -46,7 +46,7 @@ import com.hisaabcheck.core.Availability
 import java.util.Locale
 
 @Composable
-fun HomeScreen(vm: BillViewModel, shopName: String, onSignOut: () -> Unit) {
+fun HomeScreen(vm: BillViewModel, shopName: String, onSignOut: () -> Unit, signingOut: Boolean = false) {
     val context = LocalContext.current
     val screen by vm.screen.collectAsState()
     val ai by vm.aiStatus.collectAsState()
@@ -82,7 +82,7 @@ fun HomeScreen(vm: BillViewModel, shopName: String, onSignOut: () -> Unit) {
                     style = MaterialTheme.typography.headlineSmall,
                     modifier = Modifier.weight(1f).semantics { heading() },
                 )
-                TextButton(onClick = onSignOut, modifier = Modifier.heightIn(min = 48.dp)) { Text("Sign out") }
+                TextButton(onClick = onSignOut, enabled = !signingOut, modifier = Modifier.heightIn(min = 48.dp)) { SignOutLabel(signingOut) }
             }
         }
         (screen as? BillScreen.Failed)?.let { failed ->

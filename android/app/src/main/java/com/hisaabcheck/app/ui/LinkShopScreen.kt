@@ -32,6 +32,7 @@ import com.hisaabcheck.app.session.SessionViewModel
 @Composable
 fun LinkShopScreen(vm: SessionViewModel) {
     val ui by vm.ui.collectAsState()
+    val signingOut by vm.signingOut.collectAsState()
     var code by rememberSaveable { mutableStateOf("") }
     val buttonModifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
     Column(
@@ -58,6 +59,6 @@ fun LinkShopScreen(vm: SessionViewModel) {
         Button(onClick = { vm.linkShop(code) }, enabled = !ui.busy, modifier = buttonModifier) {
             Text(if (ui.busy) "Linking..." else "Link shop")
         }
-        TextButton(onClick = { vm.signOut() }, enabled = !ui.busy, modifier = buttonModifier) { Text("Sign out") }
+        TextButton(onClick = { vm.signOut() }, enabled = !ui.busy && !signingOut, modifier = buttonModifier) { SignOutLabel(signingOut) }
     }
 }

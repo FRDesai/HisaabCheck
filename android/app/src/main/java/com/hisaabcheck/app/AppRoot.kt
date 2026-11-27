@@ -40,6 +40,7 @@ import com.hisaabcheck.app.ui.LinkShopScreen
 import com.hisaabcheck.app.ui.PreviewScreen
 import com.hisaabcheck.app.ui.ProcessingScreen
 import com.hisaabcheck.app.ui.ResultScreen
+import com.hisaabcheck.app.ui.SignOutLabel
 import com.hisaabcheck.app.ui.SignInScreen
 import com.hisaabcheck.core.ConsentResult
 import androidx.compose.ui.unit.dp
@@ -78,6 +79,7 @@ private fun SessionRoot() {
     val state by vm.state.collectAsState()
     val loadError by vm.loadError.collectAsState()
     val confirmSignOut by vm.confirmSignOut.collectAsState()
+    val signingOut by vm.signingOut.collectAsState()
     // Runs after the screens of the ended session have left composition (and stopped their listeners), then wipes the cache.
     if (state is SessionState.SignedOut) LaunchedEffect(Unit) { vm.onSignedOutShown() }
     if (confirmSignOut) {
@@ -89,16 +91,16 @@ private fun SessionRoot() {
         )
     }
     when (val s = state) {
-        SessionState.Loading -> LoadingScreen(loadError, onRetry = vm::retry, onSignOut = vm::signOut)
+        SessionState.Loading -> LoadingScreen(loadError, signingOut, onRetry = vm::retry, onSignOut = vm::signOut)
         SessionState.SignedOut -> SignInScreen(vm)
         is SessionState.NeedsConsent -> ConsentScreen(vm)
         is SessionState.NeedsShop -> LinkShopScreen(vm)
-        is SessionState.Ready -> BillRoot(s.shop, onSignOut = vm::signOut)
+        is SessionState.Ready -> BillRoot(s.shop, signingOut, onSignOut = vm::signOut)
     }
 }
 
 @Composable
-private fun LoadingScreen(loadError: String?, onRetry: () -> Unit, onSignOut: () -> Unit) {
+private fun LoadingScreen(loadError: String?, signingOut: Boolean, onRetry: () -> Unit, onSignOut: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
@@ -109,13 +111,13 @@ private fun LoadingScreen(loadError: String?, onRetry: () -> Unit, onSignOut: ()
         } else {
             Text(loadError, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center)
             Button(onClick = onRetry) { Text("Try again") }
-            OutlinedButton(onClick = onSignOut) { Text("Sign out") }
+            OutlinedButton(onClick = onSignOut, enabled = !signingOut) { SignOutLabel(signingOut) }
         }
     }
 }
 
 @Composable
-private fun BillRoot(shop: Shop, onSignOut: () -> Unit) {
+private fun BillRoot(shop: Shop, signingOut: Boolean, onSignOut: () -> Unit) {
     val context = LocalContext.current
     val application = context.applicationContext as Application
     // The key matters: a later sign-in to another shop must not reuse a view model that holds this shop.
@@ -135,15 +137,13 @@ private fun BillRoot(shop: Shop, onSignOut: () -> Unit) {
         }
     }
 
-    val signOut = {
-        vm.done()
-        onSignOut()
-    }
-
+    // No vm.done() here: tapping "Sign out" and then choosing "Stay signed in" must not throw away a photo the owner can
+    // still retry. When a sign-out goes through, the session leaves Ready, this screen leaves composition, and the
+    // dispose effect above calls vm.done() (cancels a running bill, clears the photo) and vm.stopRecent().
     when (val sc = screen) {
         is BillScreen.Home, is BillScreen.Failed -> {
             if (sc is BillScreen.Failed) BackHandler { vm.done() }
-            HomeScreen(vm, shop.shopName, onSignOut = signOut)
+            HomeScreen(vm, shop.shopName, onSignOut = onSignOut, signingOut = signingOut)
         }
         is BillScreen.Processing -> {
             BackHandler { vm.done() }

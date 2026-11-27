@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
 import { auth } from '../../firebase';
 import { ensureUser, type UserDoc } from '../../adapters/store';
-import { cacheActionOnSignIn } from '../../core/session/cacheOwner';
+import { cacheActionOnSignIn, clearsReloadMark } from '../../core/session/cacheOwner';
 import { BLOCKED_NOTICE, clearLocalCache, clearReloadedMark, forgetCacheOwner, hasReloadedForCache, markReloadedForCache, readCacheOwner, setLoginNotice, writeCacheOwner } from '../../session';
 
 type Ctx = { user: User | null; profile: UserDoc | null; loading: boolean; error: string | null; refresh(): Promise<void> };
@@ -28,7 +28,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => onAuthStateChanged(auth, async (u) => {
-    if (!u) { setUser(null); setProfile(null); setError(null); setLoading(false); return; }
+    if (!u) { if (clearsReloadMark('no-user')) clearReloadedMark(); setUser(null); setProfile(null); setError(null); setLoading(false); return; }
     setLoading(true); setError(null);
     // Before anything reads Firestore: the offline cache must not hold another user's data (for example after a
     // sign-out that did not go through signOutAndClear, such as a revoked token).
@@ -41,12 +41,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         window.location.reload();
       } else {
         setLoginNotice(BLOCKED_NOTICE);
+        if (clearsReloadMark('blocked')) clearReloadedMark();
         try { await signOut(auth); } catch { /* go to login anyway */ }
         window.location.assign('/login');
       }
       return; // stay on "Loading" until the page reloads
     }
-    clearReloadedMark();
+    if (clearsReloadMark(action)) clearReloadedMark();
     if (action === 'record') writeCacheOwner(u.uid);
     try {
       const prof = await ensureUser(u);

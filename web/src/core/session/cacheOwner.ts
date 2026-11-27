@@ -15,3 +15,10 @@ export function cacheActionOnSignIn(recorded: string | null, signedInUid: string
   if (recorded === signedInUid) return 'keep';
   return reloadedAlready ? 'blocked' : 'clear';
 }
+
+/**
+ * Whether the once-per-tab reload flag is cleared at this point. Only the 'clear' action keeps it, because that is
+ * the moment the one reload is started. When nobody is signed in, and after the blocked notice is shown, it is
+ * cleared so a later sign-in by someone else tries the wipe again instead of being blocked untried.
+ */
+export const clearsReloadMark = (at: CacheAction | 'no-user'): boolean => at !== 'clear';

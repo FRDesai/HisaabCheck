@@ -78,15 +78,54 @@ describe('runShield long digit runs (bank accounts without a recognised label)',
     expect(r.matches).toEqual([]);
     expect(r.uncertainReasons).toEqual(['long_digit_run:0']);
   });
-  it('does not ask for a short leftover next to a hidden run', () => {
+  it('hides a short leftover of a longer digit run instead of leaving it visible', () => {
     const r = runShield(wordsFromLines(['Ref 2341 2341 2340 5']), 0.6);
-    expect(r.matches).toEqual([{ type: 'POSSIBLE_ID', wordIndexes: [1, 2, 3] }]);
+    expect(r.matches).toEqual([{ type: 'POSSIBLE_ID', wordIndexes: [1, 2, 3] }, { type: 'POSSIBLE_ID', wordIndexes: [4] }]);
     expect(r.uncertain).toBe(false);
   });
   it('leaves amounts, dates and times alone', () => {
-    for (const line of ['Total 50100234567.00', 'Total 1,23,45,678.00', 'Date: 02-11-2026 10:30', 'Amount 5010023456,78']) {
+    for (const line of ['Total 12345678.00', 'Total 1,23,45,678.00', 'Date: 02-11-2026 10:30', 'Amount 5010023,78', '61369305 5787.00']) {
       const r = runShield(wordsFromLines([line]), 0.6);
       expect([line, r.matches, r.uncertain]).toEqual([line, [], false]);
     }
+  });
+});
+
+describe('runShield round 2: no partial claims, landlines in parentheses, no excuses for long runs', () => {
+  const digitWordsHidden = (line: string) => {
+    const words = wordsFromLines([line]);
+    const r = runShield(words, 0.6);
+    const hidden = new Set(r.matches.flatMap((m) => m.wordIndexes));
+    return words.every((w, i) => !/\d/.test(w.text) || hidden.has(i) || r.gstinWordIndexes.includes(i));
+  };
+  it('no matcher leaves part of a longer digit run visible', () => {
+    for (const line of ['98450 12345 6789', 'Ref 2341 2341 2340 5', 'Pay 50 1002 3456 7891', 'Pay 2341 2341 2346 3196 76', 'Account Number: 6437 6326 5127 3196 76']) {
+      expect([line, digitWordsHidden(line)]).toEqual([line, true]);
+    }
+  });
+  it('a valid aadhaar inside a longer run is not reported as aadhaar', () => {
+    expect(runShield(wordsFromLines(['Pay 2341 2341 2346 3196 76']), 0.6).matches).toEqual([{ type: 'POSSIBLE_ID', wordIndexes: [1, 2, 3, 4, 5] }]);
+    expect(runShield(wordsFromLines(['Aadhaar: 2341 2341 2346.']), 0.6).matches.map((m) => m.type)).toEqual(['AADHAAR']);
+  });
+  it('the leftover of a run never takes a GSTIN word', () => {
+    const r = runShield(wordsFromLines(['98450 12345 27AAPFU0939F1ZV']), 0.6);
+    expect(r.gstinWordIndexes).toEqual([2]);
+    expect(r.matches).toEqual([{ type: 'PHONE', wordIndexes: [0, 1] }]);
+  });
+  it('a parenthesised landline is a phone with or without a label', () => {
+    expect(runShield(wordsFromLines(['(080) 7229 7102']), 0.6).matches).toEqual([{ type: 'PHONE', wordIndexes: [0, 1, 2] }]);
+    expect(runShield(wordsFromLines(['Tel: (0821) 2293 658']), 0.6)).toMatchObject({ matches: [{ type: 'PHONE', wordIndexes: [1, 2, 3] }], uncertain: false });
+  });
+  it('long runs are hidden whatever surrounds them', () => {
+    for (const line of ['Pay to 50100234567891.00', 'Pay to 1:50100234567891', 'Ref 5010.0234.5678.91', 'Ref 1234567890123456789']) {
+      expect([line, digitWordsHidden(line)]).toEqual([line, true]);
+    }
+  });
+  it('an IFSC with a look-alike fifth character is an IFSC and satisfies its label', () => {
+    expect(runShield(wordsFromLines(['IFSC: SBINO115094']), 0.6)).toMatchObject({ matches: [{ type: 'IFSC', wordIndexes: [1] }], uncertain: false });
+  });
+  it('amount- and GSTIN-shaped words do not ask on their own; other low-confidence words still do', () => {
+    expect(runShield(wordsFromLines(['|8,517.00 [3,098.00 1,15,840.00 3436.00 24KBSFKo70911ZX'], 40), 0.6).uncertainReasons).toEqual([]);
+    expect(runShield(wordsFromLines(['[735500 |25742500'], 40), 0.6).uncertainReasons).toEqual(['low_ocr_confidence:0', 'low_ocr_confidence:1']);
   });
 });

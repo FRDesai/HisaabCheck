@@ -21,25 +21,43 @@ function wordsIn(line: Line, start: number, end: number): number[] {
 }
 
 const PAN = /\b[A-Z]{3}[ABCFGHLJPT][A-Z]\d{4}[A-Z]\b/g;
-const AADHAAR = /\b[2-9]\d{3}[\s-]?\d{4}[\s-]?\d{4}\b/g;
+// Aadhaar-shaped (exact and near-miss alike), and not a piece of a longer digit run: that is left whole to LONG_RUN.
+const AADHAAR = /(?<!\d[\s.,-]?)\b[2-9]\d{3}[\s-]?\d{4}[\s-]?\d{4}\b(?![\s.,-]?\d)/g;
 const IFSC = /\b[A-Z]{4}0[A-Z0-9]{6}\b/g;
+/** An IFSC whose fifth character (always 0) was read as O, Q or D; the branch code must hold at least 3 digits. */
+const NEAR_IFSC = /\b[A-Z]{4}[OQD][A-Z0-9]{6}\b/g;
+const MIN_NEAR_IFSC_BRANCH_DIGITS = 3;
 const MOBILE = /(?<!\d)(?:\+?91[\s-]?|0)?[6-9]\d{4}[\s-]?\d{5}(?!\d)/g;
 const LANDLINE = /\b0\d{2,4}[\s-]?\d{3,4}[\s-]?\d{4}\b/g;
+/** A landline with its STD code in parentheses (one of the two may be lost by OCR): matched with or without a label. */
+const PAREN_LANDLINE = /(?:\(0\d{2,4}\)?|(?<!\d)0\d{2,4}\))[\s-]?\d(?:[\s-]?\d){5,7}(?!\d)/g;
 const BANK = /\b\d(?:[\s-]?\d){8,17}\b/g;
-// Aadhaar-shaped but failing Verhoeff, and not a piece of a longer digit run (that is left whole to LONG_RUN).
-const NEAR_AADHAAR = /(?<!\d[\s-]?)\b[2-9]\d{3}[\s-]?\d{4}[\s-]?\d{4}\b(?![\s-]?\d)/g;
 /*
- * A digit run that may be a bank account even though no label was read (OCR mangles labels: "A/C" came back as "AJC").
- * Contiguous digits, or groups of at least 3 digits (the last may have 2) joined by one space or hyphen; 9 to 18 digits
- * in all (checked in code). Letters may touch it. Not a money value or a time: no digit followed by ".", "," or ":"
- * just before it, and no ".", "," or ":" followed by a digit just after it.
+ * Long digit runs are looked for in a copy of the line where amounts, dates and times are blanked out (see
+ * maskForRuns), so they never join a run; nothing else excuses a run.
+ * LONG_RUN: a number that may be a bank account even though no label was read (OCR mangles labels: "A/C" came back as
+ * "AJC"). Contiguous digits, or groups of at least 3 digits (the last may have 2) joined by one space, hyphen or dot;
+ * 9 or more digits in all (checked in code). Letters may touch it.
  */
-const LONG_RUN = /(?<!\d|\d[.,:])\d{3,}(?:[\s-]\d{3,})*(?:[\s-]\d{2})?(?!\d|[.,:]\d)/g;
-/** The same edges, any grouping (the separators BANK tolerates): a run OCR may have split in pieces LONG_RUN does not accept. */
-const LOOSE_RUN = /(?<!\d|\d[.,:])\d(?:[\s-]?\d){8,17}(?!\d|[.,:]\d)/g;
+const LONG_RUN = /(?<!\d)\d{3,}(?:[\s.-]\d{3,})*(?:[\s.-]\d{2})?(?!\d)/g;
+/** Any grouping: a run OCR may have split in pieces LONG_RUN does not accept. */
+const LOOSE_RUN = /(?<!\d)\d(?:[\s.-]?\d){8,}(?!\d)/g;
+/** Every maximal digit run, any length: a match inside one must not leave the rest of it visible. */
+const ANY_RUN = /\d(?:[\s.-]?\d)*/g;
 const MIN_RUN_DIGITS = 9;
-const MAX_RUN_DIGITS = 18;
 const digitCount = (t: string) => t.replace(/\D/g, '').length;
+// What maskForRuns blanks out, in this order. An amount keeps fewer than 9 digits before its decimal point, or uses
+// grouping commas; a longer number with a decimal part is not an amount on these bills and stays in the run.
+const RUN_MASKS = [
+  /(?<!\d|\d[.,/-])\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}(?!\d|[.,/-]\d)/g, // date
+  /(?<!\d|\d[.,:])\d{1,2}:\d{2}(?::\d{2})?(?!\d|[.,:]\d)/g, // time
+  /(?<!\d|\d[.,])\d{1,3}(?:,\d{2,3})+(?:\.\d{1,2})?(?!\d|[.,]\d)/g, // amount with grouping commas
+  /(?<!\d|\d[.,])\d{1,8}[.,]\d{1,2}(?!\d|[.,]\d)/g, // amount with a decimal part
+];
+const MASK = '~';
+/** The line with every date, time and amount replaced by MASK characters (same length, so spans still line up). */
+const maskForRuns = (text: string) =>
+  RUN_MASKS.reduce((t, re) => t.replace(new RegExp(re.source, 'g'), (m) => MASK.repeat(m.length)), text);
 const NEAR_PAN = /\b[A-Z0-9]{10}\b/g;
 // Digit look-alikes, used to un-confuse OCR misreads.
 const TO_DIGIT: Record<string, string> = { O: '0', I: '1', L: '1', S: '5', B: '8', Z: '2' };
@@ -59,6 +77,18 @@ const LABELS: Record<LabelledType, RegExp> = {
 };
 const PARTIAL = /\b[A-Z]{5}\d{1,3}\b/;
 const PII_LIKE = /\d{3,}|[A-Z]{3,}\d/;
+/** Table-border characters OCR glues to the start or end of a cell's word. */
+const BORDER_EDGES = /^[|[\]!]+|[|[\]!]+$/g;
+/** A money value: grouping commas and/or a 2-digit decimal part, under 9 integer digits without commas. */
+const AMOUNT_SHAPE = /^\d{1,3}(?:,\d{2,3})+(?:\.\d{2})?$|^\d{1,8}\.\d{2}$/;
+/** A GSTIN, possibly misread: 14 to 16 letters and digits starting with the 2-digit state code, at least 4 letters. */
+const GSTIN_SHAPE = /^\d{2}[A-Z0-9]{12,14}$/;
+const MIN_GSTIN_SHAPE_LETTERS = 4;
+/** A low-confidence word that is only an amount or a GSTIN (once border characters are dropped) does not ask on its own. */
+function harmlessShape(t: string): boolean {
+  const s = t.replace(BORDER_EDGES, '');
+  return AMOUNT_SHAPE.test(s) || (GSTIN_SHAPE.test(s) && s.replace(/[^A-Z]/g, '').length >= MIN_GSTIN_SHAPE_LETTERS);
+}
 
 function hasLabel(text: string, type: LabelledType): boolean {
   return new RegExp(LABELS[type].source).test(text);
@@ -123,20 +153,38 @@ export function runShield(words: OcrWord[], consentOcrThreshold: number): Shield
 
   lines.forEach((line, li) => {
     const prev = lines[li - 1]?.text ?? '';
+    const runText = maskForRuns(line.text);
     find(li, AADHAAR, 'AADHAAR', 'AADHAAR', (s) => isValidVerhoeff(s.replace(/[\s-]/g, '')));
     find(li, IFSC, 'IFSC', 'IFSC');
+    find(li, NEAR_IFSC, 'IFSC', 'IFSC', (s) => digitCount(s.slice(5)) >= MIN_NEAR_IFSC_BRANCH_DIGITS);
     find(li, PAN, 'PAN', 'PAN');
     find(li, MOBILE, 'PHONE', 'PHONE');
+    find(li, PAREN_LANDLINE, 'PHONE', 'PHONE');
     if (hasLabel(line.text, 'PHONE')) find(li, LANDLINE, 'PHONE', 'PHONE');
     if (hasLabel(line.text, 'BANK_ACCOUNT') || hasLabel(prev, 'BANK_ACCOUNT')) find(li, BANK, 'BANK_ACCOUNT', 'BANK_ACCOUNT');
     // Near-misses, after every exact matcher so a real type always wins. Over-redaction is harmless; a miss is a leak.
-    find(li, NEAR_AADHAAR, 'POSSIBLE_ID', 'AADHAAR'); // Aadhaar-shaped but failing Verhoeff (valid ones were claimed above)
+    find(li, AADHAAR, 'POSSIBLE_ID', 'AADHAAR'); // Aadhaar-shaped but failing Verhoeff (valid ones were claimed above)
     find(li, NEAR_PAN, 'POSSIBLE_ID', 'PAN', isNearPan);
     find(li, MOBILE, 'POSSIBLE_ID', 'PHONE', isNearMobile, toDigits(line.text));
     // Last: any other run that could be a bank account is hidden too. A miss is a leak; this only hides a reference
     // number or two from the model, and the maths checks never use such numbers.
-    const n = (t: string) => digitCount(t) >= MIN_RUN_DIGITS && digitCount(t) <= MAX_RUN_DIGITS;
-    find(li, LONG_RUN, 'POSSIBLE_ID', 'BANK_ACCOUNT', n).forEach((i) => longRunWords.add(i));
+    find(li, LONG_RUN, 'POSSIBLE_ID', 'BANK_ACCOUNT', (t) => digitCount(t) >= MIN_RUN_DIGITS, runText).forEach((i) => longRunWords.add(i));
+  });
+
+  // No match may leave the rest of its digit run visible: the unclaimed digit-bearing words of a run that holds a
+  // match are hidden too, as one POSSIBLE_ID per run (simpler than widening a match and changing its type).
+  lines.forEach((line) => {
+    for (const m of maskForRuns(line.text).matchAll(new RegExp(ANY_RUN.source, 'g'))) {
+      const from = m.index!;
+      const to = from + m[0].length;
+      const inRun = line.spans.filter((s) => s.start < to && s.end > from && !gstinWords.has(s.word));
+      if (!inRun.some((s) => claimed.has(s.word))) continue;
+      const rest = inRun.filter((s) => !claimed.has(s.word) && SUSPICIOUS(line.text.slice(Math.max(s.start, from), Math.min(s.end, to))))
+        .map((s) => s.word);
+      if (rest.length === 0) continue;
+      rest.forEach((i) => { claimed.add(i); longRunWords.add(i); });
+      matches.push({ type: 'POSSIBLE_ID', wordIndexes: rest });
+    }
   });
 
   const nearMissWords = new Set(matches.filter((m) => m.type === 'POSSIBLE_ID').flatMap((m) => m.wordIndexes));
@@ -161,7 +209,7 @@ export function runShield(words: OcrWord[], consentOcrThreshold: number): Shield
       });
     }
     // A digit run whose visible (unclaimed, non-GSTIN) pieces still hold enough digits to be an account number.
-    for (const m of line.text.matchAll(new RegExp(LOOSE_RUN.source, 'g'))) {
+    for (const m of maskForRuns(line.text).matchAll(new RegExp(LOOSE_RUN.source, 'g'))) {
       const from = m.index!;
       const to = from + m[0].length;
       const visible = line.spans.filter((s) => s.start < to && s.end > from && !claimed.has(s.word) && !gstinWords.has(s.word))
@@ -173,7 +221,7 @@ export function runShield(words: OcrWord[], consentOcrThreshold: number): Shield
       if (gstinWords.has(s.word) || (claimed.has(s.word) && !nearMissWords.has(s.word))) continue;
       const t = line.text.slice(s.start, s.end);
       if (PARTIAL.test(t)) reasons.push(`partial_match:${s.word}`);
-      else if (words[s.word].confidence < consentOcrThreshold * 100 && PII_LIKE.test(t)) reasons.push(`low_ocr_confidence:${s.word}`);
+      else if (words[s.word].confidence < consentOcrThreshold * 100 && PII_LIKE.test(t) && !harmlessShape(t)) reasons.push(`low_ocr_confidence:${s.word}`);
     }
   });
 

@@ -19,15 +19,15 @@ The PNG files are 1000 px wide, each under 140 KB. The HTML sources are in `src/
 
 Except bill 3, every bill's items, tax and total add up. These images were checked by eye and by arithmetic.
 
-**What the OCR and shield do with them** (Tesseract.js 5.1.1 and the shield of 27 November 2026, run on these PNG files):
+**What the OCR and shield do with them, as the app sees them.** The app resizes every photo on a canvas (longer side at most 1600 px) and encodes it as JPEG quality 0.9 (`web/src/adapters/imageResize.ts`). Each PNG was converted the same way in headless Chrome (a canvas and `toDataURL('image/jpeg', 0.9)`; these bills are 1000 x 1400, so no scaling) and then read by Tesseract.js 5.1.1 and the shield of 27 November 2026:
 
 | Bill | Hidden | Preview | Why the preview appears |
 |---|---|---|---|
 | `bill1.png` | PAN, mobile | yes | a rate in the table read as `4500]` with low confidence |
 | `bill2.png` | bank account, IFSC | yes | the invoice number and a rate read with low confidence |
 | `bill3.png` | nothing (none printed) | no | |
-| `bill4.png` | Aadhaar-format number, landline | yes | a table cell read as `2000` with low confidence (not a missing value) |
+| `bill4.png` | Aadhaar-format number, landline | no | |
 | `bill5.png` | nothing (none printed) | no | |
 | `bill6.png` | nothing (the PAN line is empty) | yes | the "PAN:" label has no value: this is the "label without a value" demo |
 
-The previews on bills 1, 2 and 4 come from how OCR reads table cells and can differ on another run, browser or photo; bill 6's does not.
+Read from the raw PNG files instead, the results are the same except bill 4, which then previews (a table cell read as `2000` with low confidence). The previews on bills 1 and 2 come from how OCR reads table cells and can differ on another run, browser or photo; bill 6's does not.

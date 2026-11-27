@@ -3,11 +3,15 @@
   "files": [
     {
       "path": "android/core/src/test/differential/generate.ts",
-      "sha256": "ce976937e9cc4d31b6b428794277a36c27da105dc873fd6688f527e97f3e47b7"
+      "sha256": "176177a192540fca7d022b4a127791d1366c368b903f69fe9c09d79334fa0a69"
     },
     {
       "path": "shared/test-vectors/ocr-real-fresh.json",
       "sha256": "e55d3c654d007e2a60eaf4996b686892f04b935ed96c67d82fa8ec7bbb2fbc4f"
+    },
+    {
+      "path": "shared/test-vectors/ocr-real-review3.json",
+      "sha256": "4da4ea48efcde8d6d22522626693004e862dff4cb2037e71073b64bbbc3524e5"
     },
     {
       "path": "shared/test-vectors/ocr-real.json",
@@ -43,7 +47,7 @@
     },
     {
       "path": "web/src/core/shield/shield.ts",
-      "sha256": "c6c2d5e81c0d1b63d8ad4099622731ac7dd63d1faafe75a2cdc924b43afcf877"
+      "sha256": "75e70cf1f0c9e46fb5500a86011ca5be9764a9611fbd8fe7c88a1dc424be39b4"
     },
     {
       "path": "web/src/core/shield/verhoeff.ts",

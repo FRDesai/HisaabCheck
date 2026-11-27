@@ -343,6 +343,42 @@ for (const b of JSON.parse(readFileSync(OCR_FRESH, 'utf8')).bills as Array<{ wor
   edge('real_ocr_fresh', b.words.map(([text, x0, y0, x1, y1, confidence, line]) => ({ text, confidence, line, bbox: { x0, y0, x1, y1 } })));
 }
 
+// The 30 bills of shared/test-vectors/ocr-real-review3.json (the round-4 review), replayed word for word.
+const OCR_REVIEW3 = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../../shared/test-vectors/ocr-real-review3.json');
+for (const b of JSON.parse(readFileSync(OCR_REVIEW3, 'utf8')).bills as Array<{ words: Array<[string, number, number, number, number, number, number]> }>) {
+  edge('real_ocr_review3', b.words.map(([text, x0, y0, x1, y1, confidence, line]) => ({ text, confidence, line, bbox: { x0, y0, x1, y1 } })));
+}
+
+// Round-4 edges: phone lists (comma, slash, suffixes, amounts after them), every run separator with JavaScript
+// whitespace around it, two-group numbers with 2- to 5-digit decimal tails, bank cues with and without an account,
+// 16-character GSTIN look-alikes, bracketed codes without a 0, IFSC digits next to amounts, invoice labels. Own seed.
+const r4 = mulberry32(20261130);
+const r4Int = (n: number) => Math.floor(r4() * n);
+const r4Pick = <T>(a: readonly T[]): T => a[r4Int(a.length)];
+const r4Digits = (n: number) => Array.from({ length: n }, () => DIG[r4Int(10)]).join('');
+const R4_SEPS = [' ', '-', ' - ', ' -', '- ', ' / ', '/', '.', ',', ', ', '\u3000-\u3000', '\u00A0/\u00A0', '\u0085-'];
+const R4_TOKENS: Array<() => string> = [
+  () => '0' + r4Digits(2 + r4Int(3)) + r4Pick(['-', ' ']) + r4Digits(6 + r4Int(3)) + r4Pick([', ', ',', ' / ', '/', ' ,']) + r4Digits(r4Pick([2, 3, 4, 5, 6, 7, 8, 9])) + r4Pick(['', '.00', ' Total 4500.00', ', 4500.00']),
+  () => r4Pick(['6', '7', '8', '9']) + r4Digits(9) + r4Pick([' / ', ', ']) + r4Digits(r4Pick([2, 4, 8, 10])),
+  () => Array.from({ length: 2 + r4Int(4) }, () => r4Digits(2 + r4Int(4))).join(r4Pick(R4_SEPS)) + r4Pick(['', '.00', ',00']),
+  () => r4Digits(4 + r4Int(5)) + r4Pick([' ', '-', ' - ', ', ']) + r4Digits(2 + r4Int(4)) + '.' + r4Digits(2),
+  () => r4Pick(['Bank: Example Bank', 'Branch: Sample Nagar', 'NEFT', 'RTGS details', 'Beneficiary', 'Remittance', 'A/c No:', 'IFSC:']),
+  () => r4Digits(2) + r4Pick(['ZB', 'AB', 'OI']) + r4Digits(8) + r4Pick(['O', 'Z', '1']) + r4Digits(r4Pick([3, 4])),
+  () => r4Pick(['(', '[', '( ']) + r4Pick(['', '0', 'O']) + r4Digits(1 + r4Int(4)) + r4Pick([')', ']', ' )']) + ' ' + r4Digits(6 + r4Int(3)),
+  () => r4Pick(['IDIB', 'HDFC', 'SBIN']) + '0' + r4Digits(6) + ' ' + r4Digits(4 + r4Int(3)) + r4Pick(['.00', '']),
+  () => r4Pick(['Invoice No', 'INV', 'Bill No.', 'office', 'Ph:']) + ' 0' + r4Digits(3) + '-' + r4Digits(3 + r4Int(5)),
+  () => r4Pick(['Pay to', 'Tel', 'Mob:', 'HSN', 'Total', 'Rs.']),
+];
+for (let k = 0; k < 300; k++) {
+  const entries: Array<[string, number, number]> = [];
+  for (let li = 0, nl = 1 + r4Int(3); li < nl; li++) {
+    for (let j = 0, n = 1 + r4Int(4); j < n; j++) {
+      for (const t of r4Pick(R4_TOKENS)().split(' ').filter(Boolean)) entries.push([t, li, r4Pick([95, 95, 92, 70, 40])]);
+    }
+  }
+  edge('round4_edges', place(entries));
+}
+
 // Round-3 edges: decimal and comma tails on grouped runs, bracket variants and spaced hyphens on landlines, bracketed
 // country codes, two-group numbers next to amounts, dates of every plausibility, comma groups, GSTIN skeleton misreads,
 // IFSC bank-code look-alikes and low-confidence amounts next to digit groups. Its own seed.
@@ -660,6 +696,30 @@ for (const [label, n] of drOutcomes) {
 }
 if (edgeShield.filter((c) => c.cat === 'real_ocr').length !== 64) throw new Error('presence check: real_ocr must hold the 64 bills');
 if (edgeShield.filter((c) => c.cat === 'real_ocr_fresh').length !== 36) throw new Error('presence check: real_ocr_fresh must hold the 36 bills');
+if (edgeShield.filter((c) => c.cat === 'real_ocr_review3').length !== 30) throw new Error('presence check: real_ocr_review3 must hold the 30 bills');
+// Round-4 edges: both outcomes of each round-4 rule occur.
+const r4Cases = edgeShield.filter((c) => c.cat === 'round4_edges');
+const r4Outcomes: Array<[string, number]> = [
+  ['two phones in one line', r4Cases.filter((c) => c.matches.filter((m) => m.type === 'PHONE').length >= 2).length],
+  ['a bank_details_without_account reason', r4Cases.filter((c) => c.uncertainReasons.some((r) => r.startsWith('bank_details_without_account:'))).length],
+  ['a long_digit_run reason', r4Cases.filter((c) => c.uncertainReasons.some((r) => r.startsWith('long_digit_run:'))).length],
+  ['a possible id', r4Cases.filter((c) => c.matches.some((m) => m.type === 'POSSIBLE_ID')).length],
+  ['nothing hidden and certain', r4Cases.filter((c) => c.matches.length === 0 && !c.uncertain).length],
+];
+for (const [label, n] of r4Outcomes) {
+  // Most round-4 tokens are private, so "nothing hidden and certain" is rarer there: at least 5.
+  const min = label === 'nothing hidden and certain' ? 5 : 10;
+  if (n < min) throw new Error(`presence check: ${label} occurs in ${n} round4_edges cases, need at least ${min}`);
+  presence.push(`round4_edges ${label}: ${n}`);
+}
+// The two-group rule (a digit group joined to a decimal amount) both asks and stays quiet somewhere in the corpus.
+const twoGroup = /(?<![\d.,])\d{3,}(?: - | -|- |[ \-,]|, )\d{2,5}[.,]\d{2}(?![\d])/;
+const twoGroupCases = [...edgeShield, ...randomShieldCases].filter((c) => twoGroup.test(c.words.map((w) => w[0]).join(' ')));
+const twoGroupAsks = twoGroupCases.filter((c) => c.uncertainReasons.some((r) => r.startsWith('long_digit_run:'))).length;
+if (twoGroupAsks < 10 || twoGroupCases.length - twoGroupAsks < 10) {
+  throw new Error(`presence check: the two-group outcome needs 10 asking and 10 quiet cases, has ${twoGroupAsks} and ${twoGroupCases.length - twoGroupAsks}`);
+}
+presence.push(`two-group number and amount: ${twoGroupCases.length} cases, ${twoGroupAsks} ask`);
 // Round-3 edges: every family is present and both outcomes of the round-3 rules occur.
 const R3_TEXT: Array<[string, (t: string) => boolean]> = [
   ['a grouped run with a decimal tail', (t) => /\d{4}[ -]\d{4}[ -]\d{4}[.,]\d/.test(t)],
@@ -710,6 +770,7 @@ const SOURCES = [
   'web/src/core/types.ts',
   'shared/test-vectors/ocr-real.json',
   'shared/test-vectors/ocr-real-fresh.json',
+  'shared/test-vectors/ocr-real-review3.json',
 ].sort();
 const REGENERATE = 'cd web && npx vite-node ../android/core/src/test/differential/generate.ts';
 writeFileSync(resolve(OUT, 'manifest.json'), JSON.stringify({

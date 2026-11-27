@@ -16,11 +16,12 @@ import org.junit.jupiter.api.Test
 
 /**
  * Port of web/tests/core/shieldRealOcr.test.ts: real Tesseract.js words for synthetic, computer-rendered bills, with
- * ground truth, in two sets (the first 64 bills, and 36 fresh bills from an independent re-review). For each private
- * number, looking at the OCR words overlapping it:
+ * ground truth, in three sets (the first 64 bills, 36 fresh bills from an independent re-review, and 30 bills with new
+ * layouts from a third review). For each private number, looking at the OCR words overlapping it:
  * - a word is digit-like when it holds a digit, or at least 3 letters that are digit look-alikes (O I L S B Z) and those
  *   are more than half its letters; other words ("PAN:", "Account") are labels and do not count;
- * - NOT READ: no overlapping word is digit-like (OCR lost the number; there is nothing for the shield to hide);
+ * - NOT READ: no overlapping word is digit-like (OCR lost the number; there is nothing for the shield to hide). On a
+ *   bill with no preview this is a silent leak too;
  * - HIDDEN: every digit-like overlapping word is in a match;
  * - PREVIEW, RELATED: not hidden, previewed, and a warning points at the number's own line (a missing-value warning on
  *   the line before also counts: that is its label), or OCR read too little of the bill;
@@ -70,7 +71,11 @@ class ShieldRealOcrTest {
                 }
                 val key = "${b.name} ${item.kind} ${item.value}"
                 val digitWords = item.words.filter { digitLike(b.words[it].text) }
-                if (digitWords.isEmpty()) { notRead++; continue }
+                if (digitWords.isEmpty()) {
+                    notRead++
+                    if (!previewed) leaks.add("$key (not read)")
+                    continue
+                }
                 if (digitWords.all { it in matched }) {
                     hidden++
                     if (item.words.any { it !in matched }) withLabel++
@@ -99,7 +104,7 @@ class ShieldRealOcrTest {
                 "hard00 LANDLINE (080) 7229 7102", "hard05 LANDLINE (080) 9788 6897", "hard10 LANDLINE (0821) 2293 658",
                 "hard15 LANDLINE (044) 2557 7502", "hard13 BANK 6437 6326 5127 3196 76",
             ),
-            Totals(hidden = 305, hiddenWithLabelVisible = 7, related = 5, unrelated = 0, notRead = 0, previewBills = 47),
+            Totals(hidden = 305, hiddenWithLabelVisible = 7, related = 5, unrelated = 0, notRead = 0, previewBills = 49),
             mapOf("AMOUNT" to 6, "EWAY" to 64, "HSN" to 6),
         ),
         Set(
@@ -109,8 +114,17 @@ class ShieldRealOcrTest {
                 "fresh18 PHONE (+91) 9738994895", "fresh26 PHONE (+91) 8115403259", "fresh10 BANK 41335 35554 52147555",
                 "fresh03 LANDLINE 040 - 83294496", "fresh15 LANDLINE 0484 - 3103832", "fresh21 LANDLINE 044 - 85526798", "fresh27 LANDLINE 080 - 56598603",
             ),
-            Totals(hidden = 192, hiddenWithLabelVisible = 6, related = 3, unrelated = 0, notRead = 3, previewBills = 27),
+            Totals(hidden = 192, hiddenWithLabelVisible = 6, related = 3, unrelated = 0, notRead = 3, previewBills = 29),
             mapOf("AMOUNT" to 3, "HSN" to 1, "REF" to 36),
+        ),
+        Set(
+            "shared/test-vectors/ocr-real-review3.json", 213,
+            listOf(
+                "rev3_03 LANDLINE 53850487", "rev3_07 LANDLINE 41055215", "rev3_13 LANDLINE 71302080", "rev3_17 LANDLINE 11708862",
+                "rev3_23 LANDLINE 4003447", "rev3_27 LANDLINE 93855903", "rev3_12 LANDLINE 0712-8629 768",
+            ),
+            Totals(hidden = 191, hiddenWithLabelVisible = 11, related = 11, unrelated = 1, notRead = 10, previewBills = 27),
+            mapOf("AMOUNT" to 23, "GSTIN" to 1, "HSN" to 7),
         ),
     )
 

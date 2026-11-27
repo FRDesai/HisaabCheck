@@ -100,7 +100,7 @@ class ShieldTest {
     fun `asks the human when unclaimed pieces of one digit run hold 9 or more digits`() {
         val r = runShield(wordsFromLines(listOf("Beneficiary 50100 2 34567891")), 0.6)
         assertEquals(emptyList<PiiMatch>(), r.matches)
-        assertEquals(listOf("long_digit_run:0"), r.uncertainReasons)
+        assertEquals(listOf("long_digit_run:0", "bank_details_without_account:0"), r.uncertainReasons)
     }
 
     @Test
@@ -277,9 +277,10 @@ class ShieldTest {
     }
 
     @Test
-    fun `a two-group number with a 4-digit decimal tail asks, a rate next to an HSN code does not`() {
+    fun `a two-group number with a 3- or 4-digit decimal tail asks, a 2-digit one does not`() {
         assertEquals(listOf("long_digit_run:0"), runShield(wordsFromLines(listOf("Pay to 50100234 5678.00")), 0.6).uncertainReasons)
-        val r = runShield(wordsFromLines(listOf("Copper Wire 18842067 784.00 10,976.00")), 0.6)
+        assertEquals(listOf("long_digit_run:0"), runShield(wordsFromLines(listOf("Copper Wire 18842067 784.00 10,976.00")), 0.6).uncertainReasons)
+        val r = runShield(wordsFromLines(listOf("Copper Wire 18842067 78.00 1,976.00")), 0.6)
         assertTrue(r.matches.isEmpty())
         assertFalse(r.uncertain)
     }
@@ -329,10 +330,75 @@ class ShieldTest {
 
     @Test
     fun longCommaListsDoNotOverflowTheStack() {
-        // A pathological word of many comma groups must not crash the comma-amount mask or the amount shape check.
+        // A pathological word of many comma groups must not crash the comma-amount mask or the amount shape check. A comma
+        // alone does not join a hidden run (round 4), so it asks.
         val w = "1" + ",234".repeat(20000)
         val r = runShield(listOf(word(w, 0, 40.0)), 0.6)
-        assertEquals(listOf(PiiMatch(PiiType.POSSIBLE_ID, listOf(0))), r.matches)
+        assertTrue(r.matches.isEmpty())
+        assertEquals(listOf("long_digit_run:0", "low_ocr_confidence:0"), r.uncertainReasons)
+    }
+
+    // ---- runShield round 4: phone lists, bank details without an account, more separators
+
+    @Test
+    fun `each further number of a phone list is hidden as a phone, an amount after the phone is not`() {
+        assertEquals(
+            listOf(PiiMatch(PiiType.PHONE, listOf(1)), PiiMatch(PiiType.PHONE, listOf(2))),
+            runShield(wordsFromLines(listOf("Ph 040-53850486, 53850487")), 0.6).matches,
+        )
+        assertEquals(listOf(PiiType.PHONE, PiiType.PHONE, PiiType.PHONE), runShield(wordsFromLines(listOf("Tel 080 41055291 / 41055215 / 16")), 0.6).matches.map { it.type })
+        assertEquals(listOf(PiiMatch(PiiType.PHONE, listOf(1))), runShield(wordsFromLines(listOf("Ph 080-41055291, 4500.00")), 0.6).matches)
+    }
+
+    @Test
+    fun `bank details with no account found ask with their own reason`() {
+        assertEquals(listOf("bank_details_without_account:0"), runShield(wordsFromLines(listOf("Bank: Example Bank", "IFSC: HDFC0001234")), 0.6).uncertainReasons)
+        assertFalse(runShield(wordsFromLines(listOf("IFSC: HDFC0001234")), 0.6).uncertain)
+    }
+
+    @Test
+    fun `groups joined by a spaced hyphen, a spaced slash or a dot and a space are one run`() {
+        for (line in listOf("Pay to 5010 - 0234 - 5678 - 91", "Pay to 5010 / 0234 / 5678", "Pay to 5010.0234 5678.00", "Pay to 5010,0234 5678.00")) {
+            assertTrue(allDigitWordsHidden(listOf(line)), line)
+        }
+    }
+
+    @Test
+    fun `the digits of an IFSC do not pull the amount after it into a run`() {
+        val r = runShield(wordsFromLines(listOf("NEFT 09372140 2659670744 IDIB0069888 45430.00")), 0.6)
+        assertFalse(4 in r.matches.flatMap { it.wordIndexes })
+    }
+
+    @Test
+    fun `a 16-character GSTIN-like word excuses low confidence only with a right check character`() {
+        assertEquals(emptyList<String>(), runShield(wordsFromLines(listOf("GSTIN 27AAPFU0939F1ZVX"), 40.0), 0.6).uncertainReasons)
+        assertTrue(runShield(wordsFromLines(listOf("Pay to 47ZB8204072O1670"), 40.0), 0.6).uncertain)
+    }
+
+    @Test
+    fun `a bracketed code without its 0 is a phone only when it makes 10 digits or the line has a phone label`() {
+        assertEquals(listOf(PiiType.PHONE), runShield(wordsFromLines(listOf("(80) 2345 6789")), 0.6).matches.map { it.type })
+        assertTrue(runShield(wordsFromLines(listOf("Rice [12] 345678")), 0.6).matches.isEmpty())
+        assertEquals(listOf(PiiType.PHONE), runShield(wordsFromLines(listOf("Tel: [12] 345678")), 0.6).matches.map { it.type })
+    }
+
+    // Kotlin-only pins for round 4 (each value checked against the TypeScript core).
+
+    @Test
+    fun separatorsUseJavaScriptWhitespace() {
+        // U+3000 is JavaScript \s: around a hyphen or a slash it joins groups; U+0085 is not and does not.
+        assertEquals(listOf(PiiMatch(PiiType.POSSIBLE_ID, listOf(0))), runShield(listOf(word("5010\u3000-\u30000234\u3000/\u30005678", 0)), 0.6).matches)
+        val apart = runShield(listOf(word("5010\u0085-\u00850234\u0085/\u00855678", 0)), 0.6)
+        assertTrue(apart.matches.isEmpty())
+    }
+
+    @Test
+    fun phoneListsAndInvoiceLabelsUseAsciiDigitsAndWordBoundaries() {
+        // A full-width digit is not a digit: the 7 ASCII digits before it are a list number; an invoice label glued to
+        // letters is not a label.
+        val r = runShield(wordsFromLines(listOf("Ph 040-53850486, 5385048\uFF17")), 0.6)
+        assertEquals(listOf(PiiMatch(PiiType.PHONE, listOf(1)), PiiMatch(PiiType.PHONE, listOf(2))), r.matches)
+        assertEquals(listOf(PiiType.PHONE), runShield(wordsFromLines(listOf("XINVOICEX 0026-1234567")), 0.6).matches.map { it.type })
     }
 
     // ---- Kotlin-only pins of JavaScript semantics (a difference here would be a leak) ----
@@ -434,10 +500,14 @@ class ShieldTest {
 
     @Test
     fun reasonsKeepJavaScriptOrder() {
-        // Per line: label reasons in key order PAN, AADHAAR, IFSC, PHONE, BANK_ACCOUNT, then word reasons.
+        // Per line: label reasons in key order PAN, AADHAAR, IFSC, PHONE, BANK_ACCOUNT, then word reasons; the bill-wide
+        // bank-details reason last.
         val r = runShield(wordsFromLines(listOf("Account IFSC PAN ABCDE12", "Mob")), 0.6)
         assertEquals(
-            listOf("label_without_value:0", "label_without_value:0", "label_without_value:0", "partial_match:3", "label_without_value:1"),
+            listOf(
+                "label_without_value:0", "label_without_value:0", "label_without_value:0", "partial_match:3", "label_without_value:1",
+                "bank_details_without_account:0",
+            ),
             r.uncertainReasons,
         )
     }

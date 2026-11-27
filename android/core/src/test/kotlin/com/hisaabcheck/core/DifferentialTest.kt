@@ -182,7 +182,7 @@ class DifferentialTest {
     fun corporaHoldEveryEdgeCategory() {
         fun cats(name: String) = cases(name).mapNotNull { it["cat"]?.jsonPrimitive?.content }.groupingBy { it }.eachCount()
         val shield = cats("shield.json")
-        for (c in listOf("negative_line", "surrogates_emoji", "lone_surrogates", "case_mapping", "foreign_digits", "confidence_extremes", "long_lines", "empty_words", "long_digit_runs", "digit_run_edges", "real_ocr", "real_ocr_fresh", "round3_edges")) {
+        for (c in listOf("negative_line", "surrogates_emoji", "lone_surrogates", "case_mapping", "foreign_digits", "confidence_extremes", "long_lines", "empty_words", "long_digit_runs", "digit_run_edges", "real_ocr", "real_ocr_fresh", "round3_edges", "real_ocr_review3", "round4_edges")) {
             assertTrue((shield[c] ?: 0) >= 10, "shield edge category $c has ${shield[c] ?: 0} cases")
         }
         val parse = cats("parse.json")

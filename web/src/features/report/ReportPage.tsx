@@ -14,6 +14,15 @@ export default function ReportPage() {
   const { shopId } = useParams();
   const [params] = useSearchParams();
   const range = useMemo(() => parseReportRange(params.get('from'), params.get('to'), new Date()), [params]);
+  // The print rules in index.css apply only while this page is mounted, so printing any other page looks as it always did.
+  useEffect(() => {
+    document.body.classList.add('report-printing');
+    // @page cannot be scoped by a selector, so the A4 page rule is added and removed with the page.
+    const page = document.createElement('style');
+    page.textContent = '@media print { @page { size: A4 portrait; margin: 12mm; } }';
+    document.head.appendChild(page);
+    return () => { document.body.classList.remove('report-printing'); page.remove(); };
+  }, []);
   const back = <Link to={shopId ? `/shops/${shopId}/bills` : '/shops'} className="underline">Back to the bills</Link>;
 
   if (!range.ok) return <p role="alert" className="text-red-700">{range.message} {back}</p>;
@@ -39,7 +48,7 @@ function Report({ shopId, from, to, back }: { shopId: string | undefined; from: 
 
   if (shopFailed) return <p role="alert" className="text-red-700">This shop was not found, or it could not be loaded. <Link to="/shops" className="underline">Back to shops</Link></p>;
 
-  const caName = profile?.name || user?.displayName || user?.email || 'the CA';
+  const caName = profile?.name?.trim() || user?.displayName?.trim() || "the shop's accountant";
   return (
     <div className="space-y-4">
       <div className="no-print flex flex-wrap items-center gap-3">
@@ -66,7 +75,7 @@ function ReportBody({ report: r, shop, caName }: { report: ReportModel; shop: Sh
         <h1 className="text-2xl font-bold">{shop.shopName}</h1>
         <p className="text-sm">GSTIN: {shop.gstin || 'not recorded'}</p>
         <p className="text-sm">Period (invoice date): {formatLongDate(r.from)} to {formatLongDate(r.to)}</p>
-        <p className="text-sm">Prepared from bills approved by {caName} on {formatLongDate(istDate(new Date()))}.</p>
+        <p className="text-sm">Prepared on {formatLongDate(istDate(new Date()))} from bills approved by {caName}.</p>
       </header>
 
       {none && <p role="status" className="font-medium">No approved bills in this period.</p>}
@@ -101,7 +110,7 @@ function ReportBody({ report: r, shop, caName }: { report: ReportModel; shop: Sh
         {r.suppliers.length === 0 ? <p className="text-sm">No suppliers in this period.</p> : (
           <table className="w-full text-sm">
             <caption className="text-left text-xs text-slate-600 mb-1">
-              The {r.suppliers.length} largest of {r.supplierCount} supplier{r.supplierCount === 1 ? '' : 's'} by purchase value. Bills with the same valid GSTIN are counted together; otherwise by supplier name.
+              The {r.suppliers.length} largest of {r.supplierCount} supplier{r.supplierCount === 1 ? '' : 's'} by purchase value. Bills with the same valid GSTIN are counted together; otherwise by supplier name. Shares are rounded.
             </caption>
             <thead className="text-left border-b"><tr>
               <th scope="col" className={th}>Supplier</th><th scope="col" className={th}>GSTIN</th>
@@ -125,12 +134,14 @@ function ReportBody({ report: r, shop, caName }: { report: ReportModel; shop: Sh
 
       <div className="grid gap-5 sm:grid-cols-2 report-grid">
         <section aria-labelledby="r-gst" className="report-block">
-          <h2 id="r-gst" className="text-lg font-semibold mb-2">GST paid</h2>
+          <h2 id="r-gst" className="text-lg font-semibold mb-2">GST on purchase bills</h2>
           <table className="w-full text-sm">
-            <caption className="sr-only">GST paid and purchase totals for the period</caption>
+            <caption className="sr-only">GST on purchase bills and purchase totals for the period</caption>
             <tbody>
               {([['CGST', r.tax.cgstPaise], ['SGST', r.tax.sgstPaise], ['IGST', r.tax.igstPaise], ['Total GST', r.tax.gstPaise],
-                ['Taxable value', r.tax.taxablePaise], ['Total purchases', r.tax.totalPaise]] as const).map(([label, v]) => (
+                ['Taxable value', r.tax.taxablePaise],
+                ...(r.tax.differencePaise !== 0 ? [['Round-off and differences', r.tax.differencePaise] as const] : []),
+                ['Total purchases', r.tax.totalPaise]] as const).map(([label, v]) => (
                 <tr key={label} className={`border-b last:border-0 ${label === 'Total GST' || label === 'Total purchases' ? 'font-semibold' : ''}`}>
                   <th scope="row" className={`${th} text-left ${label === 'Total GST' || label === 'Total purchases' ? '' : 'font-normal'}`}>{label}</th>
                   <td className={`${td} text-right whitespace-nowrap`}>{formatRupees(v)}</td>

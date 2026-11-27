@@ -14,7 +14,7 @@ export interface ReportSupplier {
   key: string; name: string; /** The valid GSTIN the group is keyed by, or '' for a group keyed by name. */ gstin: string;
   bills: number; totalPaise: number; /** Share of all purchases in tenths of a percent (333 = 33.3%). */ sharePermille: number;
 }
-export interface ReportTax { cgstPaise: number; sgstPaise: number; igstPaise: number; gstPaise: number; taxablePaise: number; totalPaise: number }
+export interface ReportTax { cgstPaise: number; sgstPaise: number; igstPaise: number; gstPaise: number; taxablePaise: number; totalPaise: number; /** total - taxable - GST: per-bill round-off and bills approved after a paper check. May be negative. */ differencePaise: number }
 export interface ReportCounts { approved: number; /** Approved with a non-empty approvedWithFailedChecks. */ approvedAfterPaperCheck: number; /** Dated in range, not approved, left out. */ notApproved: number }
 export interface ReportModel {
   from: string; to: string; months: ReportMonth[]; suppliers: ReportSupplier[]; /** All suppliers in the period, not only the top 5. */ supplierCount: number;
@@ -44,7 +44,10 @@ export function formatRupees(paise: number): string {
 }
 
 /** Tenths of a percent as "33.3%". */
-export const formatShare = (permille: number): string => `${Math.floor(permille / 10)}.${permille % 10}%`;
+export function formatShare(permille: number): string {
+  const abs = Math.abs(Math.round(permille));
+  return `${permille < 0 && abs > 0 ? '-' : ''}${Math.floor(abs / 10)}.${abs % 10}%`;
+}
 
 const addMonths = (month: string, k: number): string => {
   const [y, m] = month.split('-').map(Number);
@@ -89,7 +92,7 @@ export function buildReport(bills: BillDoc[], from: string, to: string): ReportM
   const approved = exportable(bills, from, to);
   const months = new Map<string, { bills: number; totalPaise: number }>(monthsBetween(from.slice(0, 7), to.slice(0, 7)).map((m) => [m, { bills: 0, totalPaise: 0 }]));
   const groups = new Map<string, Omit<ReportSupplier, 'sharePermille'>>();
-  const tax: ReportTax = { cgstPaise: 0, sgstPaise: 0, igstPaise: 0, gstPaise: 0, taxablePaise: 0, totalPaise: 0 };
+  const tax: ReportTax = { cgstPaise: 0, sgstPaise: 0, igstPaise: 0, gstPaise: 0, taxablePaise: 0, totalPaise: 0, differencePaise: 0 };
   let afterPaperCheck = 0;
 
   for (const b of approved) {
@@ -104,6 +107,7 @@ export function buildReport(bills: BillDoc[], from: string, to: string): ReportM
     if (b.approvedWithFailedChecks.length > 0) afterPaperCheck += 1;
   }
   tax.gstPaise = tax.cgstPaise + tax.sgstPaise + tax.igstPaise;
+  tax.differencePaise = tax.totalPaise - tax.taxablePaise - tax.gstPaise;
 
   const maxMonth = Math.max(0, ...[...months.values()].map((m) => m.totalPaise));
   const sorted = [...groups.values()].sort((x, y) => y.totalPaise - x.totalPaise || y.bills - x.bills || cmp(x.key, y.key));

@@ -2,13 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Print: used by the Business Health Report (features/report). */
+/* Print: used by the Business Health Report (features/report); every rule here applies only while the report page is mounted
+   (body.report-printing, set by ReportPage, which also adds the A4 @page rule). */
 @media print {
-  @page { size: A4 portrait; margin: 12mm; }
-  html, body, body * { background: #fff !important; color: #000 !important; box-shadow: none !important; }
-  .no-print, div:has(> main) > header { display: none !important; }
-  main { padding: 0 !important; }
-  div:has(> main) { min-height: 0 !important; }
+  .no-print { display: none !important; }
+  body.report-printing, body.report-printing * { background: #fff !important; color: #000 !important; box-shadow: none !important; }
+  body.report-printing div:has(> main) > header { display: none !important; }
+  body.report-printing main { padding: 0 !important; }
+  body.report-printing div:has(> main) { min-height: 0 !important; }
   .report-page { border: 0 !important; padding: 0 !important; max-width: none !important; font-size: 10pt; }
   .report-page > * + * { margin-top: 10pt !important; }
   .report-page h1 { font-size: 16pt !important; }
@@ -17,7 +18,7 @@
   .report-page th, .report-page td { padding: 2.5pt 5pt !important; }
   .report-page tr { border-color: #bbb !important; }
   /* Firebase's dev-only emulator notice is position: fixed and would cover the page bottom; print it once, in the flow. */
-  .firebase-emulator-warning { position: static !important; }
+  body.report-printing .firebase-emulator-warning { position: static !important; }
   .report-page .report-bar-track { background: #e5e5e5 !important; border: 1px solid #999; }
   .report-page .report-bar { background: #333 !important; }
   .report-page, .report-page * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }

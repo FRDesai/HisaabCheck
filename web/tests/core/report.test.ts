@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   buildReport, defaultReportRange, formatLongDate, formatRupees, formatShare, MAX_REPORT_MONTHS, monthLabel, parseReportRange,
 } from '../../src/core/report/report';
+import { CSV_HEADER, toCsv } from '../../src/core/export/csv';
+import { exportable } from '../../src/core/export/rows';
 import type { BillDoc } from '../../src/core/review/billDoc';
 import type { Extraction } from '../../src/core/types';
 import { makeBill } from '../billFixtures';
@@ -20,7 +22,7 @@ describe('buildReport', () => {
     expect(r.months.every((m) => m.bills === 0 && m.totalPaise === 0 && m.barPct === 0)).toBe(true);
     expect(r.suppliers).toEqual([]);
     expect(r.supplierCount).toBe(0);
-    expect(r.tax).toEqual({ cgstPaise: 0, sgstPaise: 0, igstPaise: 0, gstPaise: 0, taxablePaise: 0, totalPaise: 0 });
+    expect(r.tax).toEqual({ cgstPaise: 0, sgstPaise: 0, igstPaise: 0, gstPaise: 0, taxablePaise: 0, totalPaise: 0, differencePaise: 0 });
     expect(r.counts).toEqual({ approved: 0, approvedAfterPaperCheck: 0, notApproved: 0 });
   });
 
@@ -72,7 +74,7 @@ describe('buildReport', () => {
       ap({ invoiceDate: '2026-07-03', total: 1.005, cgst: 0, sgst: 0, igst: 0, taxableValue: 1.005 })];
     const r = buildReport(bills, '2026-07-01', '2026-07-31');
     // 1.005 rupees is 100 paise, as toPaise (and so both exports) round it.
-    expect(r.tax).toEqual({ cgstPaise: 30, sgstPaise: 30, igstPaise: 30, gstPaise: 90, taxablePaise: 130, totalPaise: 130 });
+    expect(r.tax).toEqual({ cgstPaise: 30, sgstPaise: 30, igstPaise: 30, gstPaise: 90, taxablePaise: 130, totalPaise: 130, differencePaise: -90 });
     expect(r.months[0].totalPaise).toBe(130);
     expect(Number.isInteger(r.suppliers[0].totalPaise)).toBe(true);
     expect(formatRupees(r.tax.totalPaise)).toBe('₹1.30');
@@ -96,6 +98,58 @@ describe('buildReport', () => {
     const r = buildReport([ap({ invoiceDate: '2026-12-31', total: 10 }), ap({ invoiceDate: '2027-01-01', total: 20 })], '2026-11-01', '2027-02-28');
     expect(r.months.map((m) => [m.month, m.totalPaise])).toEqual([['2026-11', 0], ['2026-12', 1000], ['2027-01', 2000], ['2027-02', 0]]);
     expect(r.months[2].label).toBe('January 2027');
+  });
+});
+
+describe('buildReport difference (total - taxable - GST)', () => {
+  const R = ['2026-07-01', '2026-07-31'] as const;
+  it('is zero when taxable value plus GST equals the total', () => {
+    const r = buildReport([ap({ invoiceDate: '2026-07-01', taxableValue: 100, cgst: 9, sgst: 9, igst: 0, total: 118 })], ...R);
+    expect(r.tax.differencePaise).toBe(0);
+  });
+  it('is a small positive figure for per-bill round-off, summed over bills', () => {
+    const r = buildReport([ap({ invoiceDate: '2026-07-01', taxableValue: 100.2, cgst: 9, sgst: 9, igst: 0, total: 118.5 }),
+      ap({ invoiceDate: '2026-07-02', taxableValue: 100.3, cgst: 9, sgst: 9, igst: 0, total: 118.5 })], ...R);
+    expect(r.tax.differencePaise).toBe(30 + 20);
+    expect(r.tax.totalPaise - r.tax.taxablePaise - r.tax.gstPaise).toBe(r.tax.differencePaise);
+  });
+  it('can be a larger gap, for example a bill approved after a paper check', () => {
+    const r = buildReport([ap({ invoiceDate: '2026-07-01', taxableValue: 100, cgst: 9, sgst: 9, igst: 0, total: 150 }, { approvedWithFailedChecks: ['total'] })], ...R);
+    expect(r.tax.differencePaise).toBe(3200);
+  });
+  it('is negative when taxable value plus GST exceeds the total', () => {
+    const r = buildReport([ap({ invoiceDate: '2026-07-01', taxableValue: 100, cgst: 9, sgst: 9, igst: 0, total: 100 })], ...R);
+    expect(r.tax.differencePaise).toBe(-1800);
+  });
+  it('is zero when the taxable value was not read (derived as total - tax)', () => {
+    const r = buildReport([ap({ invoiceDate: '2026-07-01', taxableValue: 0, cgst: 9, sgst: 9, igst: 0, total: 118 })], ...R);
+    expect(r.tax.differencePaise).toBe(0);
+  });
+});
+
+describe('report totals match the CSV export', () => {
+  it('equals the column sums of the CSV for the same bills and range', () => {
+    const bills = [
+      ap({ invoiceDate: '2026-07-01', taxableValue: 100.2, cgst: 9, sgst: 9, igst: 0, total: 118.5 }),
+      ap({ invoiceDate: '2026-07-15', taxableValue: 0, cgst: 0, sgst: 0, igst: 18, total: 118 }),
+      ap({ invoiceDate: '2026-07-31', taxableValue: 50.55, cgst: 4.5, sgst: 4.5, igst: 0, total: 60 }),
+      ap({ invoiceDate: '2026-08-01', total: 999 }), // outside the range
+      makeBill('draft1', { status: 'draft', extraction: { invoiceDate: '2026-07-10', total: 777 } }), // not approved
+    ];
+    const from = '2026-07-01', to = '2026-07-31';
+    const r = buildReport(bills, from, to);
+    const csv = toCsv(exportable(bills, from, to)).replace(/^\uFEFF/, '').trim().split('\r\n');
+    const col = (name: (typeof CSV_HEADER)[number]) => {
+      const i = CSV_HEADER.indexOf(name);
+      return csv.slice(1).reduce((a, line) => a + Math.round(Number(line.split(',')[i]) * 100), 0);
+    };
+    expect(csv.length - 1).toBe(r.counts.approved);
+    expect(r.tax.taxablePaise).toBe(col('Taxable value'));
+    expect(r.tax.cgstPaise).toBe(col('CGST'));
+    expect(r.tax.sgstPaise).toBe(col('SGST'));
+    expect(r.tax.igstPaise).toBe(col('IGST'));
+    expect(r.tax.totalPaise).toBe(col('Total'));
+    expect(r.tax.gstPaise).toBe(col('CGST') + col('SGST') + col('IGST'));
   });
 });
 
@@ -193,8 +247,14 @@ describe('report ranges', () => {
       expect(p.ok).toBe(false);
       if (!p.ok) expect(p.message.length).toBeGreaterThan(0);
     }
-    expect(parseReportRange('2026-01-01', '2027-12-31', now).ok).toBe(MAX_REPORT_MONTHS >= 24);
     expect(parseReportRange('2020-01-01', '2026-12-31', now).ok).toBe(false);
+  });
+  it('accepts a 24-month range and refuses a 25-month range', () => {
+    expect(MAX_REPORT_MONTHS).toBe(24);
+    expect(parseReportRange('2025-01-01', '2026-12-31', now)).toEqual({ ok: true, from: '2025-01-01', to: '2026-12-31' });
+    const p = parseReportRange('2025-01-01', '2027-01-31', now);
+    expect(p.ok).toBe(false);
+    if (!p.ok) expect(p.message).toContain('24');
   });
 });
 
@@ -212,6 +272,10 @@ describe('report formatting', () => {
     expect(formatShare(1000)).toBe('100.0%');
     expect(formatShare(333)).toBe('33.3%');
     expect(formatShare(5)).toBe('0.5%');
+    expect(formatShare(0)).toBe('0.0%');
+    // A negative value cannot print "-1.-5%" or "-1.5%" with a wrong sign.
+    expect(formatShare(-5)).toBe('-0.5%');
+    expect(formatShare(-333)).toBe('-33.3%');
     expect(formatLongDate('2026-11-27')).toBe('27 November 2026');
     expect(formatLongDate('2026-01-01')).toBe('1 January 2026');
     expect(monthLabel('2027-02')).toBe('February 2027');

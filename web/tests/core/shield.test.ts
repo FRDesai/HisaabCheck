@@ -84,7 +84,7 @@ describe('runShield long digit runs (bank accounts without a recognised label)',
     expect(r.uncertain).toBe(false);
   });
   it('leaves amounts, dates and times alone', () => {
-    for (const line of ['Total 12345678.00', 'Total 1,23,45,678.00', 'Date: 02-11-2026 10:30', 'Amount 5010023,78', '61369305 5787.00']) {
+    for (const line of ['Total 12345678.00', 'Total 1,23,45,678.00', 'Date: 02-11-2026 10:30', 'Amount 5010023,78']) {
       const r = runShield(wordsFromLines([line]), 0.6);
       expect([line, r.matches, r.uncertain]).toEqual([line, [], false]);
     }
@@ -125,7 +125,53 @@ describe('runShield round 2: no partial claims, landlines in parentheses, no exc
     expect(runShield(wordsFromLines(['IFSC: SBINO115094']), 0.6)).toMatchObject({ matches: [{ type: 'IFSC', wordIndexes: [1] }], uncertain: false });
   });
   it('amount- and GSTIN-shaped words do not ask on their own, other low-confidence words still do', () => {
-    expect(runShield(wordsFromLines(['|8,517.00 [3,098.00 1,15,840.00 3436.00 24KBSFKo70911ZX'], 40), 0.6).uncertainReasons).toEqual([]);
+    expect(runShield(wordsFromLines(['Total |8,517.00', 'Tax [3,098.00', 'Due 1,15,840.00', 'Net 3436.00', 'GSTIN 24KBSFKo70911ZX'], 40), 0.6).uncertainReasons).toEqual([]);
+    // Joined to another digit group, an amount-shaped word is no longer excused.
+    expect(runShield(wordsFromLines(['Pay 4133 52147555.00'], 40), 0.6).uncertainReasons).toContain('low_ocr_confidence:2');
     expect(runShield(wordsFromLines(['[735500 |25742500'], 40), 0.6).uncertainReasons).toEqual(['low_ocr_confidence:0', 'low_ocr_confidence:1']);
   });
 });
+
+describe('runShield round 3: decimal tails, brackets, prefixes, narrower excuses', () => {
+  const allDigitWordsHidden = (lines: string[], confidence = 95) => {
+    const words = wordsFromLines(lines, confidence);
+    const r = runShield(words, 0.6);
+    const hidden = new Set(r.matches.flatMap((m) => m.wordIndexes));
+    return words.every((w, i) => !/\d/.test(w.text) || hidden.has(i) || r.gstinWordIndexes.includes(i));
+  };
+  it('hides the numbers the re-review found leaking, every digit-bearing word of them', () => {
+    for (const line of ['Pay to 8613 5061 1962.00', 'Pay to 7552 7265 7128 9010.00', 'Office [044] 43087740', 'Office 080 - 23456789',
+      'Call (+91) 9738994895', 'call (+91) 8115403259', '{080} 2345 6789', '(O80) 2345 6789', '(80) 2345 6789', '(98450) 12345']) {
+      expect([line, allDigitWordsHidden([line])]).toEqual([line, true]);
+    }
+  });
+  it('the bracketed country code is part of the phone match', () => {
+    expect(runShield(wordsFromLines(['Call (+91) 9738994895']), 0.6).matches).toEqual([{ type: 'PHONE', wordIndexes: [1, 2] }]);
+  });
+  it('a two-group number with a 4-digit decimal tail asks; a rate next to an HSN code does not', () => {
+    expect(runShield(wordsFromLines(['Pay to 50100234 5678.00']), 0.6).uncertainReasons).toEqual(['long_digit_run:0']);
+    expect(runShield(wordsFromLines(['Copper Wire 18842067 784.00 10,976.00']), 0.6)).toMatchObject({ matches: [], uncertain: false });
+  });
+  it('a decimal tail joined to a hidden run is hidden with it; an amount with grouping commas is not', () => {
+    const r = runShield(wordsFromLines(['Pay to 41335535554 52147555.00']), 0.6);
+    expect(r.matches.flatMap((m) => m.wordIndexes).sort()).toEqual([2, 3]);
+    expect(runShield(wordsFromLines(['Mob 9845012345 1,250.00']), 0.6).matches).toEqual([{ type: 'PHONE', wordIndexes: [1] }]);
+  });
+  it('a GSTIN excuses a low-confidence word only with its skeleton (one OCR insertion and Z read as 7 allowed)', () => {
+    for (const w of ['27STWPDOS512F1ZE', '090NGFH3466G372', '24KBSFKo70911ZX']) {
+      expect([w, runShield(wordsFromLines([`GSTIN ${w}`], 40), 0.6).uncertainReasons]).toEqual([w, []]);
+    }
+    for (const w of ['12ABCPE1234F99', '29ABCPE12F34Z5X']) {
+      expect([w, runShield(wordsFromLines([`Ref ${w}`], 40), 0.6).uncertain]).toEqual([w, true]);
+    }
+  });
+  it('a comma amount with more than 9 integer digits is not blanked', () => {
+    expect(runShield(wordsFromLines(['Ref 5010 0234 1,23,45,67,890.00']), 0.6).uncertain).toBe(true);
+    expect(runShield(wordsFromLines(['Total 12,34,56,789.00']), 0.6)).toMatchObject({ matches: [], uncertain: false });
+  });
+  it('dates are blanked only when the day and month are plausible', () => {
+    expect(runShield(wordsFromLines(['Date 31-12-2026 Due 2026-12-31 On 02.11.26']), 0.6)).toMatchObject({ matches: [], uncertain: false });
+    expect(runShield(wordsFromLines(['Ref 5010-02-3456 7891']), 0.6).uncertainReasons).toEqual(['long_digit_run:0']);
+  });
+});
+

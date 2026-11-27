@@ -3,7 +3,11 @@
   "files": [
     {
       "path": "android/core/src/test/differential/generate.ts",
-      "sha256": "67135565a68722ab8939c93f0567f407149c7929d43b2243608076f3fb4bbaf4"
+      "sha256": "0ef5edd1c3b656fcc3844a072dac3926a9559f1b7b4d7dc7bf69ea57694d720f"
+    },
+    {
+      "path": "shared/test-vectors/ocr-real.json",
+      "sha256": "d3d980419bffed261a8d8d6e70028dd07e5c8e86d05fc5f94f51198a2adcec89"
     },
     {
       "path": "web/src/core/checks/checks.ts",
@@ -35,7 +39,7 @@
     },
     {
       "path": "web/src/core/shield/shield.ts",
-      "sha256": "089cce933b05683422f7832c646a4346a494de084c97fef38a33712e7ba09a63"
+      "sha256": "c9b1580ca1ee572dba4821988b5d338ffd7d7db90db51c8b35614b7520ee9e81"
     },
     {
       "path": "web/src/core/shield/verhoeff.ts",

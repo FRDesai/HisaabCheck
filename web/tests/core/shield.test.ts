@@ -124,7 +124,7 @@ describe('runShield round 2: no partial claims, landlines in parentheses, no exc
   it('an IFSC with a look-alike fifth character is an IFSC and satisfies its label', () => {
     expect(runShield(wordsFromLines(['IFSC: SBINO115094']), 0.6)).toMatchObject({ matches: [{ type: 'IFSC', wordIndexes: [1] }], uncertain: false });
   });
-  it('amount- and GSTIN-shaped words do not ask on their own; other low-confidence words still do', () => {
+  it('amount- and GSTIN-shaped words do not ask on their own, other low-confidence words still do', () => {
     expect(runShield(wordsFromLines(['|8,517.00 [3,098.00 1,15,840.00 3436.00 24KBSFKo70911ZX'], 40), 0.6).uncertainReasons).toEqual([]);
     expect(runShield(wordsFromLines(['[735500 |25742500'], 40), 0.6).uncertainReasons).toEqual(['low_ocr_confidence:0', 'low_ocr_confidence:1']);
   });

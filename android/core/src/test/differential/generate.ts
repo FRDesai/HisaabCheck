@@ -296,6 +296,48 @@ for (const line of ['Beneficiary 5010 0234 5678 91', 'Ref 123456789', 'Ref 12345
   edge('long_digit_runs', place(line.split(' ').map((t) => [t, 0, 95] as [string, number, number])));
 }
 
+// Digit-run edges (round 2): matches inside longer runs, parenthesised landlines, amounts and times next to long runs,
+// dotted groups, runs of 19 or more digits, IFSC look-alikes, border characters and amount- or GSTIN-shaped
+// low-confidence words. Its own seeded generator, so the other corpora keep their bytes.
+const dr = mulberry32(20261128);
+const drInt = (n: number) => Math.floor(dr() * n);
+const drPick = <T>(a: readonly T[]): T => a[drInt(a.length)];
+const drDigits = (n: number) => Array.from({ length: n }, () => DIG[drInt(10)]).join('');
+const drSep = () => drPick([' ', ' ', '-', '.', '', '\u00A0', '\u3000', '\u0085', ':', ',']);
+const drMobile = () => drPick(['6', '7', '8', '9']) + drDigits(9);
+const drAadhaar = () => { const b = drPick('23456789'.split('')) + drDigits(10); return b + verhoeffCheck(b); };
+const DR_TOKENS: Array<() => string> = [
+  () => drMobile().slice(0, 5) + ' ' + drMobile().slice(5) + drSep() + drDigits(1 + drInt(5)), // mobile and more digits
+  () => { const a = drAadhaar(); return a.slice(0, 4) + ' ' + a.slice(4, 8) + ' ' + a.slice(8) + drSep() + drDigits(1 + drInt(6)); },
+  () => drDigits(1 + drInt(3)) + drSep() + drAadhaar(),
+  () => drPick(['(', '', '(']) + '0' + drDigits(2 + drInt(3)) + drPick([')', ')', '']) + drPick([' ', '', '-']) + drDigits(3 + drInt(2)) + drPick([' ', '', '-']) + drDigits(3 + drInt(2)),
+  () => drDigits(1 + drInt(20)) + drPick(['.00', '.5', ',78', '.0', '']),
+  () => drDigits(1 + drInt(3)) + ':' + drDigits(2 + drInt(14)),
+  () => Array.from({ length: 2 + drInt(4) }, () => drDigits(1 + drInt(5))).join(drPick(['.', ' ', '-'])),
+  () => drDigits(19 + drInt(12)),
+  () => drPick(['SBIN', 'HDFC', 'CNRB', 'PROM', 'KKBK']) + drPick(['O', 'o', 'Q', 'D', '0']) + drPick([drDigits(6), 'TIONAL', drDigits(3) + 'ABC', 'G' + drDigits(5)]),
+  () => drPick(['|', '[', ']', '!', '', '|[']) + drPick([drDigits(1 + drInt(3)) + ',' + drDigits(3) + '.00', drDigits(4 + drInt(6)), drDigits(1) + ',' + drDigits(2) + ',' + drDigits(3) + '.00']) + drPick(['', '|', ']', '!']),
+  () => drDigits(2) + drPick(['JRFE', 'KBSFKO', 'EATCM', 'ABCDE']) + drDigits(4 + drInt(3)) + drPick(['1Z8', 'Z', '128', '1ZXY']),
+  () => drPick(['M8', 'J29', 'A4', '25kg']) + ' ' + drDigits(4 + drInt(5)),
+  () => drPick(['02-11-2026', '2026-11-02', '10:30', '09.06.2026']) + ' ' + drDigits(1 + drInt(12)),
+  () => drPick(['Account Number:', 'Pay', 'Ref', 'Tel:', 'IFSC:', 'Aadhaar', 'Mob', 'GSTIN', 'Total', 'Rs.']),
+];
+for (let k = 0; k < 300; k++) {
+  const entries: Array<[string, number, number]> = [];
+  for (let li = 0, nl = 1 + drInt(2); li < nl; li++) {
+    for (let j = 0, n = 1 + drInt(4); j < n; j++) {
+      for (const t of drPick(DR_TOKENS)().split(' ').filter(Boolean)) entries.push([t, li, drPick([95, 95, 92, 70, 40, 10])]);
+    }
+  }
+  edge('digit_run_edges', place(entries));
+}
+
+// The 64 real Tesseract bills of shared/test-vectors/ocr-real.json, replayed word for word.
+const OCR_REAL = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../../shared/test-vectors/ocr-real.json');
+for (const b of JSON.parse(readFileSync(OCR_REAL, 'utf8')).bills as Array<{ words: Array<[string, number, number, number, number, number, number]> }>) {
+  edge('real_ocr', b.words.map(([text, x0, y0, x1, y1, confidence, line]) => ({ text, confidence, line, bbox: { x0, y0, x1, y1 } })));
+}
+
 const shieldCases = [...edgeShield, ...randomShieldCases];
 
 // ---------------------------------------------------------------- parseExtraction
@@ -550,9 +592,36 @@ const lrOutcomes: Array<[string, number]> = [
   ['nothing hidden and certain', lrCases.filter((c) => c.matches.length === 0 && !c.uncertain).length],
 ];
 for (const [label, n] of lrOutcomes) {
-  if (n < 10) throw new Error(`presence check: ${label} occurs in ${n} long_digit_runs cases, need at least 10`);
+  // At least 5 (round 2 hides more of this section: decimal tails and runs of 19 or more digits no longer stay visible).
+  if (n < 5) throw new Error(`presence check: ${label} occurs in ${n} long_digit_runs cases, need at least 5`);
   presence.push(`long_digit_runs ${label}: ${n}`);
 }
+
+// Digit-run edges: every family is present and both outcomes of each round-2 rule occur.
+const DR_TEXT: Array<[string, (t: string) => boolean]> = [
+  ['a parenthesised STD code', (t) => /\(0\d{2,4}\)/.test(t)],
+  ['a run of 19 or more digits', (t) => /\d{19,}/.test(t)],
+  ['dotted groups', (t) => /\d{3,}\.\d{3,}\.\d/.test(t)],
+  ['digits after a digit and colon', (t) => /\d:\d{9,}/.test(t)],
+  ['an IFSC look-alike', (t) => /[A-Z]{4}[OoQD]\d{6}/.test(t)],
+  ['a bordered amount', (t) => /[|[\]!]\d{1,3},\d{3}\.00/.test(t)],
+];
+for (const [label, test] of DR_TEXT) requirePresence(edgeShield, 'digit_run_edges', label, test, 10);
+const drCases = edgeShield.filter((c) => c.cat === 'digit_run_edges');
+const drOutcomes: Array<[string, number]> = [
+  ['a phone match', drCases.filter((c) => c.matches.some((m) => m.type === 'PHONE')).length],
+  ['an IFSC match', drCases.filter((c) => c.matches.some((m) => m.type === 'IFSC')).length],
+  ['an AADHAAR match', drCases.filter((c) => c.matches.some((m) => m.type === 'AADHAAR')).length],
+  ['two or more possible ids', drCases.filter((c) => c.matches.filter((m) => m.type === 'POSSIBLE_ID').length >= 2).length],
+  ['a long_digit_run reason', drCases.filter((c) => c.uncertainReasons.some((r) => r.startsWith('long_digit_run:'))).length],
+  ['a low_ocr_confidence reason', drCases.filter((c) => c.uncertainReasons.some((r) => r.startsWith('low_ocr_confidence:'))).length],
+  ['nothing hidden and certain', drCases.filter((c) => c.matches.length === 0 && !c.uncertain).length],
+];
+for (const [label, n] of drOutcomes) {
+  if (n < 10) throw new Error(`presence check: ${label} occurs in ${n} digit_run_edges cases, need at least 10`);
+  presence.push(`digit_run_edges ${label}: ${n}`);
+}
+if (edgeShield.filter((c) => c.cat === 'real_ocr').length !== 64) throw new Error('presence check: real_ocr must hold the 64 bills');
 
 mkdirSync(OUT, { recursive: true });
 // Every non-ASCII character is written as a \u escape so the files stay plain ASCII.
@@ -578,6 +647,7 @@ const SOURCES = [
   'web/src/core/shield/shield.ts',
   'web/src/core/shield/verhoeff.ts',
   'web/src/core/types.ts',
+  'shared/test-vectors/ocr-real.json',
 ].sort();
 const REGENERATE = 'cd web && npx vite-node ../android/core/src/test/differential/generate.ts';
 writeFileSync(resolve(OUT, 'manifest.json'), JSON.stringify({

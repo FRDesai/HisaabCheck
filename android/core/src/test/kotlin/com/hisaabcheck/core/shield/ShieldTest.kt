@@ -104,15 +104,15 @@ class ShieldTest {
     }
 
     @Test
-    fun `does not ask for a short leftover next to a hidden run`() {
+    fun `hides a short leftover of a longer digit run instead of leaving it visible`() {
         val r = runShield(wordsFromLines(listOf("Ref 2341 2341 2340 5")), 0.6)
-        assertEquals(listOf(PiiMatch(PiiType.POSSIBLE_ID, listOf(1, 2, 3))), r.matches)
+        assertEquals(listOf(PiiMatch(PiiType.POSSIBLE_ID, listOf(1, 2, 3)), PiiMatch(PiiType.POSSIBLE_ID, listOf(4))), r.matches)
         assertFalse(r.uncertain)
     }
 
     @Test
     fun `leaves amounts, dates and times alone`() {
-        for (line in listOf("Total 50100234567.00", "Total 1,23,45,678.00", "Date: 02-11-2026 10:30", "Amount 5010023456,78")) {
+        for (line in listOf("Total 12345678.00", "Total 1,23,45,678.00", "Date: 02-11-2026 10:30", "Amount 5010023,78", "61369305 5787.00")) {
             val r = runShield(wordsFromLines(listOf(line)), 0.6)
             assertEquals(emptyList<PiiMatch>(), r.matches, line)
             assertFalse(r.uncertain, line)
@@ -150,6 +150,103 @@ class ShieldTest {
         assertFalse(r.uncertain)
         // A look-alike inside a longer word is not a label.
         assertEquals(listOf(PiiType.POSSIBLE_ID), runShield(listOf(word("ALCOHOL", 0), word("50100234567891", 0)), 0.6).matches.map { it.type })
+    }
+
+    // ---- runShield round 2: no partial claims, landlines in parentheses, no excuses for long runs
+
+    private fun digitWordsHidden(line: String): Boolean {
+        val words = wordsFromLines(listOf(line))
+        val r = runShield(words, 0.6)
+        val hidden = r.matches.flatMap { it.wordIndexes }.toSet()
+        return words.indices.all { i -> words[i].text.none { it in '0'..'9' } || i in hidden || i in r.gstinWordIndexes }
+    }
+
+    @Test
+    fun `no matcher leaves part of a longer digit run visible`() {
+        for (line in listOf("98450 12345 6789", "Ref 2341 2341 2340 5", "Pay 50 1002 3456 7891", "Pay 2341 2341 2346 3196 76", "Account Number: 6437 6326 5127 3196 76")) {
+            assertTrue(digitWordsHidden(line), line)
+        }
+    }
+
+    @Test
+    fun `a valid aadhaar inside a longer run is not reported as aadhaar`() {
+        assertEquals(listOf(PiiMatch(PiiType.POSSIBLE_ID, listOf(1, 2, 3, 4, 5))), runShield(wordsFromLines(listOf("Pay 2341 2341 2346 3196 76")), 0.6).matches)
+        assertEquals(listOf(PiiType.AADHAAR), runShield(wordsFromLines(listOf("Aadhaar: 2341 2341 2346.")), 0.6).matches.map { it.type })
+    }
+
+    @Test
+    fun `the leftover of a run never takes a GSTIN word`() {
+        val r = runShield(wordsFromLines(listOf("98450 12345 27AAPFU0939F1ZV")), 0.6)
+        assertEquals(listOf(2), r.gstinWordIndexes)
+        assertEquals(listOf(PiiMatch(PiiType.PHONE, listOf(0, 1))), r.matches)
+    }
+
+    @Test
+    fun `a parenthesised landline is a phone with or without a label`() {
+        assertEquals(listOf(PiiMatch(PiiType.PHONE, listOf(0, 1, 2))), runShield(wordsFromLines(listOf("(080) 7229 7102")), 0.6).matches)
+        val r = runShield(wordsFromLines(listOf("Tel: (0821) 2293 658")), 0.6)
+        assertEquals(listOf(PiiMatch(PiiType.PHONE, listOf(1, 2, 3))), r.matches)
+        assertFalse(r.uncertain)
+    }
+
+    @Test
+    fun `long runs are hidden whatever surrounds them`() {
+        for (line in listOf("Pay to 50100234567891.00", "Pay to 1:50100234567891", "Ref 5010.0234.5678.91", "Ref 1234567890123456789")) {
+            assertTrue(digitWordsHidden(line), line)
+        }
+    }
+
+    @Test
+    fun `an IFSC with a look-alike fifth character is an IFSC and satisfies its label`() {
+        val r = runShield(wordsFromLines(listOf("IFSC: SBINO115094")), 0.6)
+        assertEquals(listOf(PiiMatch(PiiType.IFSC, listOf(1))), r.matches)
+        assertFalse(r.uncertain)
+    }
+
+    @Test
+    fun `amount- and GSTIN-shaped words do not ask on their own, other low-confidence words still do`() {
+        assertEquals(emptyList<String>(), runShield(wordsFromLines(listOf("|8,517.00 [3,098.00 1,15,840.00 3436.00 24KBSFKo70911ZX"), 40.0), 0.6).uncertainReasons)
+        assertEquals(listOf("low_ocr_confidence:0", "low_ocr_confidence:1"), runShield(wordsFromLines(listOf("[735500 |25742500"), 40.0), 0.6).uncertainReasons)
+    }
+
+    // Kotlin-only pins for round 2 (each value checked against the TypeScript core).
+
+    @Test
+    fun runsAreJoinedByJavaScriptWhitespaceAndDotsOnly() {
+        // U+3000 (JavaScript \s) and dots join groups into one run; U+0085 does not.
+        val joined = runShield(listOf(word("5010\u30000234.5678\u300091", 0)), 0.6)
+        assertEquals(listOf(PiiMatch(PiiType.POSSIBLE_ID, listOf(0))), joined.matches)
+        val apart = runShield(listOf(word("50100\u0085234.5678", 0)), 0.6)
+        assertTrue(apart.matches.isEmpty())
+        assertFalse(apart.uncertain)
+    }
+
+    @Test
+    fun masksUseAsciiDigitsOnly() {
+        // A full-width digit is not \d: "1\uFF12,345.00" is no amount mask for its "1", and the decimal tail still masks.
+        val r = runShield(listOf(word("50100234567891\uFF15.00", 0)), 0.6)
+        assertEquals(listOf(PiiMatch(PiiType.POSSIBLE_ID, listOf(0))), r.matches)
+        val a = runShield(listOf(word("Total", 0), word("1\u0662,345.00", 0)), 0.6)
+        assertTrue(a.matches.isEmpty())
+    }
+
+    @Test
+    fun borderEdgesAreTrimmedLikeTheJavaScriptPattern() {
+        // Only edges: a border character inside the word keeps it from being an amount.
+        assertEquals(emptyList<String>(), runShield(listOf(word("|[8,517.00]!", 0, 40.0)), 0.6).uncertainReasons)
+        assertEquals(listOf("low_ocr_confidence:0"), runShield(listOf(word("|8,517.00|5", 0, 40.0)), 0.6).uncertainReasons)
+    }
+
+    @Test
+    fun veryLongDigitStringsDoNotOverflowTheStack() {
+        // java.util.regex recursed once per digit on the run patterns; the hand scanners do not (values from TypeScript).
+        assertEquals(listOf(PiiMatch(PiiType.POSSIBLE_ID, listOf(0))), runShield(listOf(word("1".repeat(100000), 0)), 0.6).matches)
+        assertEquals(listOf(PiiMatch(PiiType.POSSIBLE_ID, listOf(0))), runShield(listOf(word(List(20000) { "123" }.joinToString("-"), 0)), 0.6).matches)
+        val dots = runShield(listOf(word(List(30000) { "1" }.joinToString("."), 0)), 0.6)
+        assertTrue(dots.matches.isEmpty())
+        assertEquals(listOf("long_digit_run:0"), dots.uncertainReasons)
+        val tail = runShield(listOf(word("9845012345", 0), word(List(20000) { "12" }.joinToString("-"), 0)), 0.6)
+        assertEquals(listOf(PiiMatch(PiiType.PHONE, listOf(0)), PiiMatch(PiiType.POSSIBLE_ID, listOf(1))), tail.matches)
     }
 
     // ---- Kotlin-only pins of JavaScript semantics (a difference here would be a leak) ----

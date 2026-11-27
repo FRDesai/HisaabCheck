@@ -73,6 +73,8 @@ class DifferentialManifestTest {
                 if (target.startsWith("web/src/core/")) todo.add(target)
             }
         }
+        // Shared data files the generator reads (the real-OCR bills) are inputs too.
+        for (m in Regex("shared/test-vectors/[A-Za-z0-9-]+[.]json").findAll(File(repoRoot, generator).readText())) seen.add(m.value)
         assertEquals(seen.sorted(), paths.sorted(), "manifest files versus the files the generator reaches")
     }
 

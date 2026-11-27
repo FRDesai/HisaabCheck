@@ -112,7 +112,7 @@ class ShieldTest {
 
     @Test
     fun `leaves amounts, dates and times alone`() {
-        for (line in listOf("Total 12345678.00", "Total 1,23,45,678.00", "Date: 02-11-2026 10:30", "Amount 5010023,78", "61369305 5787.00")) {
+        for (line in listOf("Total 12345678.00", "Total 1,23,45,678.00", "Date: 02-11-2026 10:30", "Amount 5010023,78")) {
             val r = runShield(wordsFromLines(listOf(line)), 0.6)
             assertEquals(emptyList<PiiMatch>(), r.matches, line)
             assertFalse(r.uncertain, line)
@@ -205,8 +205,11 @@ class ShieldTest {
 
     @Test
     fun `amount- and GSTIN-shaped words do not ask on their own, other low-confidence words still do`() {
-        assertEquals(emptyList<String>(), runShield(wordsFromLines(listOf("|8,517.00 [3,098.00 1,15,840.00 3436.00 24KBSFKo70911ZX"), 40.0), 0.6).uncertainReasons)
+        val lines = listOf("Total |8,517.00", "Tax [3,098.00", "Due 1,15,840.00", "Net 3436.00", "GSTIN 24KBSFKo70911ZX")
+        assertEquals(emptyList<String>(), runShield(wordsFromLines(lines, 40.0), 0.6).uncertainReasons)
         assertEquals(listOf("low_ocr_confidence:0", "low_ocr_confidence:1"), runShield(wordsFromLines(listOf("[735500 |25742500"), 40.0), 0.6).uncertainReasons)
+        // Joined to another digit group, an amount-shaped word is no longer excused.
+        assertTrue("low_ocr_confidence:2" in runShield(wordsFromLines(listOf("Pay 4133 52147555.00"), 40.0), 0.6).uncertainReasons)
     }
 
     // Kotlin-only pins for round 2 (each value checked against the TypeScript core).
@@ -247,6 +250,89 @@ class ShieldTest {
         assertEquals(listOf("long_digit_run:0"), dots.uncertainReasons)
         val tail = runShield(listOf(word("9845012345", 0), word(List(20000) { "12" }.joinToString("-"), 0)), 0.6)
         assertEquals(listOf(PiiMatch(PiiType.PHONE, listOf(0)), PiiMatch(PiiType.POSSIBLE_ID, listOf(1))), tail.matches)
+    }
+
+    // ---- runShield round 3: decimal tails, brackets, prefixes, narrower excuses
+
+    private fun allDigitWordsHidden(lines: List<String>, confidence: Double = 95.0): Boolean {
+        val words = wordsFromLines(lines, confidence)
+        val r = runShield(words, 0.6)
+        val hidden = r.matches.flatMap { it.wordIndexes }.toSet()
+        return words.indices.all { i -> words[i].text.none { it in '0'..'9' } || i in hidden || i in r.gstinWordIndexes }
+    }
+
+    @Test
+    fun `hides the numbers the re-review found leaking, every digit-bearing word of them`() {
+        for (line in listOf(
+            "Pay to 8613 5061 1962.00", "Pay to 7552 7265 7128 9010.00", "Office [044] 43087740", "Office 080 - 23456789",
+            "Call (+91) 9738994895", "call (+91) 8115403259", "{080} 2345 6789", "(O80) 2345 6789", "(80) 2345 6789", "(98450) 12345",
+        )) {
+            assertTrue(allDigitWordsHidden(listOf(line)), line)
+        }
+    }
+
+    @Test
+    fun `the bracketed country code is part of the phone match`() {
+        assertEquals(listOf(PiiMatch(PiiType.PHONE, listOf(1, 2))), runShield(wordsFromLines(listOf("Call (+91) 9738994895")), 0.6).matches)
+    }
+
+    @Test
+    fun `a two-group number with a 4-digit decimal tail asks, a rate next to an HSN code does not`() {
+        assertEquals(listOf("long_digit_run:0"), runShield(wordsFromLines(listOf("Pay to 50100234 5678.00")), 0.6).uncertainReasons)
+        val r = runShield(wordsFromLines(listOf("Copper Wire 18842067 784.00 10,976.00")), 0.6)
+        assertTrue(r.matches.isEmpty())
+        assertFalse(r.uncertain)
+    }
+
+    @Test
+    fun `a decimal tail joined to a hidden run is hidden with it, an amount with grouping commas is not`() {
+        val r = runShield(wordsFromLines(listOf("Pay to 41335535554 52147555.00")), 0.6)
+        assertEquals(listOf(2, 3), r.matches.flatMap { it.wordIndexes }.sorted())
+        assertEquals(listOf(PiiMatch(PiiType.PHONE, listOf(1))), runShield(wordsFromLines(listOf("Mob 9845012345 1,250.00")), 0.6).matches)
+    }
+
+    @Test
+    fun `a GSTIN excuses a low-confidence word only with its skeleton (one OCR insertion and Z read as 7 allowed)`() {
+        for (w in listOf("27STWPDOS512F1ZE", "090NGFH3466G372", "24KBSFKo70911ZX")) {
+            assertEquals(emptyList<String>(), runShield(wordsFromLines(listOf("GSTIN $w"), 40.0), 0.6).uncertainReasons, w)
+        }
+        for (w in listOf("12ABCPE1234F99", "29ABCPE12F34Z5X")) {
+            assertTrue(runShield(wordsFromLines(listOf("Ref $w"), 40.0), 0.6).uncertain, w)
+        }
+    }
+
+    @Test
+    fun `a comma amount with more than 9 integer digits is not blanked`() {
+        assertTrue(runShield(wordsFromLines(listOf("Ref 5010 0234 1,23,45,67,890.00")), 0.6).uncertain)
+        val r = runShield(wordsFromLines(listOf("Total 12,34,56,789.00")), 0.6)
+        assertTrue(r.matches.isEmpty())
+        assertFalse(r.uncertain)
+    }
+
+    @Test
+    fun `dates are blanked only when the day and month are plausible`() {
+        val r = runShield(wordsFromLines(listOf("Date 31-12-2026 Due 2026-12-31 On 02.11.26")), 0.6)
+        assertTrue(r.matches.isEmpty())
+        assertFalse(r.uncertain)
+        assertEquals(listOf("long_digit_run:0"), runShield(wordsFromLines(listOf("Ref 5010-02-3456 7891")), 0.6).uncertainReasons)
+    }
+
+    // Kotlin-only pins for round 3 (each value checked against the TypeScript core).
+
+    @Test
+    fun bracketsInJavaCharacterClassesAreLiteral() {
+        // [ and ] inside a Java character class need escaping; JavaScript reads them literally. Both forms must match.
+        for (line in listOf("[044] 43087740", "044] 43087740", "[044 43087740", "|044| 43087740")) {
+            assertEquals(listOf(PiiType.PHONE), runShield(wordsFromLines(listOf(line)), 0.6).matches.map { it.type }, line)
+        }
+    }
+
+    @Test
+    fun longCommaListsDoNotOverflowTheStack() {
+        // A pathological word of many comma groups must not crash the comma-amount mask or the amount shape check.
+        val w = "1" + ",234".repeat(20000)
+        val r = runShield(listOf(word(w, 0, 40.0)), 0.6)
+        assertEquals(listOf(PiiMatch(PiiType.POSSIBLE_ID, listOf(0))), r.matches)
     }
 
     // ---- Kotlin-only pins of JavaScript semantics (a difference here would be a leak) ----

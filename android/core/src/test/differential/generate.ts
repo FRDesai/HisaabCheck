@@ -337,6 +337,43 @@ const OCR_REAL = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../.
 for (const b of JSON.parse(readFileSync(OCR_REAL, 'utf8')).bills as Array<{ words: Array<[string, number, number, number, number, number, number]> }>) {
   edge('real_ocr', b.words.map(([text, x0, y0, x1, y1, confidence, line]) => ({ text, confidence, line, bbox: { x0, y0, x1, y1 } })));
 }
+// The 36 fresh bills of shared/test-vectors/ocr-real-fresh.json (the round-3 re-review), replayed word for word.
+const OCR_FRESH = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../../shared/test-vectors/ocr-real-fresh.json');
+for (const b of JSON.parse(readFileSync(OCR_FRESH, 'utf8')).bills as Array<{ words: Array<[string, number, number, number, number, number, number]> }>) {
+  edge('real_ocr_fresh', b.words.map(([text, x0, y0, x1, y1, confidence, line]) => ({ text, confidence, line, bbox: { x0, y0, x1, y1 } })));
+}
+
+// Round-3 edges: decimal and comma tails on grouped runs, bracket variants and spaced hyphens on landlines, bracketed
+// country codes, two-group numbers next to amounts, dates of every plausibility, comma groups, GSTIN skeleton misreads,
+// IFSC bank-code look-alikes and low-confidence amounts next to digit groups. Its own seed.
+const r3 = mulberry32(20261129);
+const r3Int = (n: number) => Math.floor(r3() * n);
+const r3Pick = <T>(a: readonly T[]): T => a[r3Int(a.length)];
+const r3Digits = (n: number) => Array.from({ length: n }, () => DIG[r3Int(10)]).join('');
+const r3Grouped = (n: number, sep: string) => { const d = r3Digits(n); let o = ''; for (let i = 0; i < d.length; i += 4) o += (i ? sep : '') + d.slice(i, i + 4); return o; };
+const R3_TOKENS: Array<() => string> = [
+  () => r3Grouped(r3Pick([8, 12, 14, 16, 18]), r3Pick([' ', ' ', '-'])) + r3Pick(['.00', ',00', '.5', '']),
+  () => r3Digits(4 + r3Int(8)) + ' ' + r3Digits(1 + r3Int(6)) + r3Pick(['.00', '.50', ',75']),
+  () => r3Pick(['(', '[', '{', '|', '', 'C']) + r3Pick(['0', 'O', '']) + r3Digits(2 + r3Int(3)) + r3Pick([')', ']', '}', '|', '']) + r3Pick([' ', '', '-']) + r3Digits(3 + r3Int(2)) + r3Pick([' ', '', '-', '.']) + r3Digits(3 + r3Int(2)),
+  () => '0' + r3Digits(2 + r3Int(3)) + r3Pick([' - ', '-', ' -', '- ', ' ']) + r3Digits(5 + r3Int(5)),
+  () => r3Pick(['(+91)', '(91)', '(+91', '+91)', '(+9l)']) + r3Pick([' ', '']) + r3Pick(['6', '7', '8', '9']) + r3Digits(9),
+  () => '(' + r3Pick(['6', '7', '8', '9']) + r3Digits(4) + ')' + r3Pick([' ', '']) + r3Digits(5),
+  () => [r3Digits(1 + r3Int(4)), r3Digits(1 + r3Int(2)), r3Digits(1 + r3Int(4))].join(r3Pick(['-', '/', '.'])) + r3Pick(['', ' ' + r3Digits(4), ' 10:30']),
+  () => Array.from({ length: 2 + r3Int(6) }, (_, i) => (i === 0 ? r3Digits(1 + r3Int(3)) : r3Digits(r3Pick([2, 3, 3])))).join(',') + r3Pick(['', '.00']),
+  () => r3Digits(2) + r3Pick(['ABCPE', 'KBSFK', 'IJRFE', 'STWPD', 'B0SPS']) + r3Pick(['1234', 'I234', 'O9O9', '12S4']) + r3Pick(['F', '8', 'E']) + r3Pick(['1', 'I', 'A']) + r3Pick(['Z', '2', '7', 'X']) + r3Pick(['5', 'V', 'E']) + r3Pick(['', '', 'Z']),
+  () => r3Pick(['SB1N', 'I0BA', 'HDFC', 'INV2', 'CARD', 'ICIC', '5BIN']) + r3Pick(['0', 'O', 'Q', 'D', '6']) + r3Pick([r3Digits(6), 'A' + r3Digits(5), 'ABC' + r3Digits(3)]),
+  () => r3Pick(['|', '[', '']) + r3Pick([r3Digits(1 + r3Int(3)) + ',' + r3Digits(3) + '.00', r3Digits(4 + r3Int(5)) + '.00']),
+  () => r3Pick(['Pay to', 'Office', 'Call', 'Ph:', 'Tel', 'GSTIN', 'A/C No', 'Remit to', 'Total', 'HSN', 'Ref']),
+];
+for (let k = 0; k < 300; k++) {
+  const entries: Array<[string, number, number]> = [];
+  for (let li = 0, nl = 1 + r3Int(2); li < nl; li++) {
+    for (let j = 0, n = 1 + r3Int(4); j < n; j++) {
+      for (const t of r3Pick(R3_TOKENS)().split(' ').filter(Boolean)) entries.push([t, li, r3Pick([95, 95, 92, 70, 40, 36])]);
+    }
+  }
+  edge('round3_edges', place(entries));
+}
 
 const shieldCases = [...edgeShield, ...randomShieldCases];
 
@@ -622,6 +659,30 @@ for (const [label, n] of drOutcomes) {
   presence.push(`digit_run_edges ${label}: ${n}`);
 }
 if (edgeShield.filter((c) => c.cat === 'real_ocr').length !== 64) throw new Error('presence check: real_ocr must hold the 64 bills');
+if (edgeShield.filter((c) => c.cat === 'real_ocr_fresh').length !== 36) throw new Error('presence check: real_ocr_fresh must hold the 36 bills');
+// Round-3 edges: every family is present and both outcomes of the round-3 rules occur.
+const R3_TEXT: Array<[string, (t: string) => boolean]> = [
+  ['a grouped run with a decimal tail', (t) => /\d{4}[ -]\d{4}[ -]\d{4}[.,]\d/.test(t)],
+  ['a square, curly or bar bracket before a code', (t) => /[[{|][0O]?\d{2,4}/.test(t)],
+  ['a spaced hyphen', (t) => /\d \- \d/.test(t)],
+  ['a bracketed country code', (t) => /\(\+?9[1l]\)/.test(t)],
+  ['comma groups', (t) => /\d,\d\d\d?,\d/.test(t)],
+  ['a GSTIN-like word', (t) => /\d\d[A-Z0-9]{5}[0-9OIS]{4}/.test(t)],
+];
+for (const [label, test] of R3_TEXT) requirePresence(edgeShield, 'round3_edges', label, test, 10);
+const r3Cases = edgeShield.filter((c) => c.cat === 'round3_edges');
+const r3Outcomes: Array<[string, number]> = [
+  ['a phone match', r3Cases.filter((c) => c.matches.some((m) => m.type === 'PHONE')).length],
+  ['an IFSC match', r3Cases.filter((c) => c.matches.some((m) => m.type === 'IFSC')).length],
+  ['a possible id', r3Cases.filter((c) => c.matches.some((m) => m.type === 'POSSIBLE_ID')).length],
+  ['a long_digit_run reason', r3Cases.filter((c) => c.uncertainReasons.some((r) => r.startsWith('long_digit_run:'))).length],
+  ['a low_ocr_confidence reason', r3Cases.filter((c) => c.uncertainReasons.some((r) => r.startsWith('low_ocr_confidence:'))).length],
+  ['nothing hidden and certain', r3Cases.filter((c) => c.matches.length === 0 && !c.uncertain).length],
+];
+for (const [label, n] of r3Outcomes) {
+  if (n < 10) throw new Error(`presence check: ${label} occurs in ${n} round3_edges cases, need at least 10`);
+  presence.push(`round3_edges ${label}: ${n}`);
+}
 
 mkdirSync(OUT, { recursive: true });
 // Every non-ASCII character is written as a \u escape so the files stay plain ASCII.
@@ -648,6 +709,7 @@ const SOURCES = [
   'web/src/core/shield/verhoeff.ts',
   'web/src/core/types.ts',
   'shared/test-vectors/ocr-real.json',
+  'shared/test-vectors/ocr-real-fresh.json',
 ].sort();
 const REGENERATE = 'cd web && npx vite-node ../android/core/src/test/differential/generate.ts';
 writeFileSync(resolve(OUT, 'manifest.json'), JSON.stringify({

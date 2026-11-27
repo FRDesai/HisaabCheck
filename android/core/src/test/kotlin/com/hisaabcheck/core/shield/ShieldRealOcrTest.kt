@@ -15,15 +15,27 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Port of web/tests/core/shieldRealOcr.test.ts: real Tesseract.js words for 64 synthetic, computer-rendered bills, with
- * ground truth. A private number is HIDDEN when every overlapping OCR word that holds a digit is in a match, PREVIEW when
- * it is not hidden but the bill goes to the human preview, and a SILENT LEAK otherwise.
+ * Port of web/tests/core/shieldRealOcr.test.ts: real Tesseract.js words for synthetic, computer-rendered bills, with
+ * ground truth, in two sets (the first 64 bills, and 36 fresh bills from an independent re-review). For each private
+ * number, looking at the OCR words overlapping it:
+ * - a word is digit-like when it holds a digit, or at least 3 letters that are digit look-alikes (O I L S B Z) and those
+ *   are more than half its letters; other words ("PAN:", "Account") are labels and do not count;
+ * - NOT READ: no overlapping word is digit-like (OCR lost the number; there is nothing for the shield to hide);
+ * - HIDDEN: every digit-like overlapping word is in a match;
+ * - PREVIEW, RELATED: not hidden, previewed, and a warning points at the number's own line (a missing-value warning on
+ *   the line before also counts: that is its label), or OCR read too little of the bill;
+ * - PREVIEW, UNRELATED: not hidden, previewed only because of a warning elsewhere;
+ * - SILENT LEAK: not hidden and no preview.
  */
 class ShieldRealOcrTest {
     private class Item(val kind: String, val private: Boolean, val value: String, val words: List<Int>)
     private class Bill(val name: String, val words: List<OcrWord>, val items: List<Item>)
 
-    private val bills: List<Bill> = readRepoJson("shared/test-vectors/ocr-real.json").jsonObject.getValue("bills").jsonArray.map { b ->
+    private data class Totals(val hidden: Int, val hiddenWithLabelVisible: Int, val related: Int, val unrelated: Int, val notRead: Int, val previewBills: Int)
+
+    private class Result(val t: Totals, val leaks: List<String>, val notHidden: List<String>, val overHidden: Map<String, Int>, val gstinWordsInMatches: Int)
+
+    private fun load(path: String): List<Bill> = readRepoJson(path).jsonObject.getValue("bills").jsonArray.map { b ->
         val o = b.jsonObject
         Bill(
             o.getValue("name").jsonPrimitive.content,
@@ -39,22 +51,15 @@ class ShieldRealOcrTest {
         )
     }
 
-    private class Result(
-        val hidden: Int, val preview: Int, val leaks: List<String>, val previewBills: Int, val gstinWordsInMatches: Int,
-        val notHidden: List<String>, val overHidden: Map<String, Int>,
-    )
-
-    private val r: Result = run {
-        var hidden = 0
-        var preview = 0
-        var previewBills = 0
-        var gstinInMatches = 0
+    private fun evaluate(bills: List<Bill>): Result {
+        var hidden = 0; var withLabel = 0; var related = 0; var unrelated = 0; var notRead = 0; var previewBills = 0; var gstinInMatches = 0
         val leaks = mutableListOf<String>()
         val notHidden = mutableListOf<String>()
         val over = sortedMapOf<String, Int>()
         for (b in bills) {
             val s = runShield(b.words, 0.6)
-            val previewed = s.uncertain || !ocrAdequate(b.words)
+            val adequate = ocrAdequate(b.words)
+            val previewed = s.uncertain || !adequate
             if (previewed) previewBills++
             val matched = s.matches.flatMap { it.wordIndexes }.toSet()
             gstinInMatches += s.gstinWordIndexes.count { it in matched }
@@ -63,51 +68,100 @@ class ShieldRealOcrTest {
                     if (item.words.any { it in matched }) over[item.kind] = (over[item.kind] ?: 0) + 1
                     continue
                 }
-                val digitWords = item.words.filter { i -> b.words[i].text.any { it in '0'..'9' } }
-                if (digitWords.isNotEmpty() && digitWords.all { it in matched }) {
+                val key = "${b.name} ${item.kind} ${item.value}"
+                val digitWords = item.words.filter { digitLike(b.words[it].text) }
+                if (digitWords.isEmpty()) { notRead++; continue }
+                if (digitWords.all { it in matched }) {
                     hidden++
-                } else {
-                    notHidden.add("${b.name} ${item.kind} ${item.value}")
-                    if (previewed) preview++ else leaks.add("${b.name} ${item.kind} ${item.value}")
+                    if (item.words.any { it !in matched }) withLabel++
+                    continue
                 }
+                notHidden.add(key)
+                if (!previewed) { leaks.add(key); continue }
+                val lines = item.words.map { b.words[it].line }.toSet()
+                val own = !adequate || s.uncertainReasons.any { x ->
+                    val (k, n) = x.split(':')
+                    val li = if (k == "low_ocr_confidence" || k == "partial_match") b.words[n.toInt()].line else n.toInt()
+                    li in lines || (k == "label_without_value" && li + 1 in lines)
+                }
+                if (own) related++ else unrelated++
             }
         }
-        Result(hidden, preview, leaks, previewBills, gstinInMatches, notHidden, over)
+        return Result(Totals(hidden, withLabel, related, unrelated, notRead, previewBills), leaks, notHidden, over, gstinInMatches)
     }
 
+    private class Set(val path: String, val privateCount: Int, val mustHide: List<String>, val totals: Totals, val overHidden: Map<String, Int>)
+
+    private val sets = listOf(
+        Set(
+            "shared/test-vectors/ocr-real.json", 310,
+            listOf(
+                "hard00 LANDLINE (080) 7229 7102", "hard05 LANDLINE (080) 9788 6897", "hard10 LANDLINE (0821) 2293 658",
+                "hard15 LANDLINE (044) 2557 7502", "hard13 BANK 6437 6326 5127 3196 76",
+            ),
+            Totals(hidden = 305, hiddenWithLabelVisible = 7, related = 5, unrelated = 0, notRead = 0, previewBills = 47),
+            mapOf("AMOUNT" to 6, "EWAY" to 64, "HSN" to 6),
+        ),
+        Set(
+            "shared/test-vectors/ocr-real-fresh.json", 198,
+            listOf(
+                "fresh30 BANK 8613 5061 1962", "fresh25 BANK 7552 7265 7128 9010", "fresh26 LANDLINE [044] 43087740",
+                "fresh18 PHONE (+91) 9738994895", "fresh26 PHONE (+91) 8115403259", "fresh10 BANK 41335 35554 52147555",
+                "fresh03 LANDLINE 040 - 83294496", "fresh15 LANDLINE 0484 - 3103832", "fresh21 LANDLINE 044 - 85526798", "fresh27 LANDLINE 080 - 56598603",
+            ),
+            Totals(hidden = 192, hiddenWithLabelVisible = 6, related = 3, unrelated = 0, notRead = 3, previewBills = 27),
+            mapOf("AMOUNT" to 3, "HSN" to 1, "REF" to 36),
+        ),
+    )
+
     @Test
-    fun `holds 64 bills and 310 private numbers`() {
-        assertEquals(64, bills.size)
-        assertEquals(310, bills.sumOf { b -> b.items.count { it.private } })
+    fun `both sets hold the expected private numbers`() {
+        for (s in sets) assertEquals(s.privateCount, load(s.path).sumOf { b -> b.items.count { it.private } }, s.path)
     }
 
     @Test
     fun `never leaks a private number silently`() {
-        assertEquals(emptyList<String>(), r.leaks)
+        for (s in sets) assertEquals(emptyList<String>(), evaluate(load(s.path)).leaks, s.path)
     }
 
     @Test
     fun `never puts a GSTIN word in a match`() {
-        assertEquals(0, r.gstinWordsInMatches)
+        for (s in sets) assertEquals(0, evaluate(load(s.path)).gstinWordsInMatches, s.path)
     }
 
     @Test
-    fun `hides the unlabelled parenthesised landlines and the 18-digit account tail`() {
-        val all = bills.flatMap { b -> b.items.map { "${b.name} ${it.kind} ${it.value}" } }
-        for (v in listOf(
-            "hard00 LANDLINE (080) 7229 7102", "hard05 LANDLINE (080) 9788 6897", "hard10 LANDLINE (0821) 2293 658",
-            "hard15 LANDLINE (044) 2557 7502", "hard13 BANK 6437 6326 5127 3196 76",
-        )) {
-            assertTrue(v in all, v)
-            assertFalse(v in r.notHidden, v)
+    fun `hides the numbers the reviews found leaking`() {
+        for (s in sets) {
+            val bills = load(s.path)
+            val all = bills.flatMap { b -> b.items.map { "${b.name} ${it.kind} ${it.value}" } }
+            val r = evaluate(bills)
+            for (v in s.mustHide) {
+                assertTrue(v in all, v)
+                assertFalse(v in r.notHidden, v)
+            }
         }
     }
 
     @Test
     fun `pins the totals (a change here is a regression or an improvement to explain)`() {
-        assertEquals(
-            listOf(304, 6, 46, mapOf("AMOUNT" to 4, "EWAY" to 64, "HSN" to 6)),
-            listOf(r.hidden, r.preview, r.previewBills, r.overHidden),
-        )
+        for (s in sets) {
+            val r = evaluate(load(s.path))
+            assertEquals(s.totals, r.t, s.path)
+            assertEquals(s.overHidden, r.overHidden, s.path)
+        }
+    }
+
+    @Test
+    fun `counts digit look-alike words as digits and labels as labels`() {
+        assertEquals(listOf(true, true, true, false, false, false, false), listOf("5OIOO", "SBIN", "9845", "PAN:", "Account", "@ybl", "Mob:").map(::digitLike))
+    }
+
+    private companion object {
+        fun digitLike(t: String): Boolean {
+            if (t.any { it in '0'..'9' }) return true
+            val letters = t.filter { it in 'A'..'Z' || it in 'a'..'z' }
+            val n = letters.count { it.uppercaseChar() in "OILSBZ" }
+            return n >= 3 && n * 2 > letters.length
+        }
     }
 }

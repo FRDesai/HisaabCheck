@@ -148,11 +148,11 @@ describe('runShield round 3: decimal tails, brackets, prefixes, narrower excuses
   it('the bracketed country code is part of the phone match', () => {
     expect(runShield(wordsFromLines(['Call (+91) 9738994895']), 0.6).matches).toEqual([{ type: 'PHONE', wordIndexes: [1, 2] }]);
   });
-  it('a two-group number with a 4-digit decimal tail asks; a rate next to an HSN code does not', () => {
+  it('a two-group number with a 4-digit decimal tail asks, a rate next to an HSN code does not', () => {
     expect(runShield(wordsFromLines(['Pay to 50100234 5678.00']), 0.6).uncertainReasons).toEqual(['long_digit_run:0']);
     expect(runShield(wordsFromLines(['Copper Wire 18842067 784.00 10,976.00']), 0.6)).toMatchObject({ matches: [], uncertain: false });
   });
-  it('a decimal tail joined to a hidden run is hidden with it; an amount with grouping commas is not', () => {
+  it('a decimal tail joined to a hidden run is hidden with it, an amount with grouping commas is not', () => {
     const r = runShield(wordsFromLines(['Pay to 41335535554 52147555.00']), 0.6);
     expect(r.matches.flatMap((m) => m.wordIndexes).sort()).toEqual([2, 3]);
     expect(runShield(wordsFromLines(['Mob 9845012345 1,250.00']), 0.6).matches).toEqual([{ type: 'PHONE', wordIndexes: [1] }]);

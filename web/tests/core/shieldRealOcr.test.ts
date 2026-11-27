@@ -1,16 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import first from '../../../shared/test-vectors/ocr-real.json';
 import fresh from '../../../shared/test-vectors/ocr-real-fresh.json';
+import review3 from '../../../shared/test-vectors/ocr-real-review3.json';
 import { runShield } from '../../src/core/shield/shield';
 import { ocrAdequate } from '../../src/core/shield/adequacy';
 import type { OcrWord } from '../../src/core/types';
 
 /*
- * Real Tesseract.js words for synthetic, computer-rendered bills, with ground truth (two sets: the first 64 bills, and
- * 36 fresh bills from an independent re-review). For each private number, looking at the OCR words overlapping it:
+ * Real Tesseract.js words for synthetic, computer-rendered bills, with ground truth (three sets: the first 64 bills,
+ * 36 fresh bills from an independent re-review, and 30 bills with new layouts from a third review). For each private number, looking at the OCR words overlapping it:
  * - a word is digit-like when it holds a digit, or at least 3 letters that are digit look-alikes (O I L S B Z) and
  *   those are more than half its letters; other words ("PAN:", "Account") are labels and do not count;
- * - NOT READ: no overlapping word is digit-like (OCR lost the number; there is nothing for the shield to hide);
+ * - NOT READ: no overlapping word is digit-like (OCR lost the number; there is nothing for the shield to hide). On a
+ *   bill with no preview this is a silent leak too;
  * - HIDDEN: every digit-like overlapping word is in a match;
  * - PREVIEW, RELATED: not hidden, the bill is previewed, and a warning points at the number's own line (a missing-value
  *   warning on the line before also counts: that is its label), or OCR read too little of the bill;
@@ -50,7 +52,11 @@ function evaluate(bills: Bill[]) {
       }
       const key = `${b.name} ${kind} ${value}`;
       const digitWords = idx.filter((i) => digitLike(words[i].text));
-      if (digitWords.length === 0) { t.notRead++; continue; }
+      if (digitWords.length === 0) {
+        t.notRead++;
+        if (!preview) leaks.push(`${key} (not read)`);
+        continue;
+      }
       if (digitWords.every((i) => matched.has(i))) {
         t.hidden++;
         if (idx.some((i) => !matched.has(i))) t.hiddenWithLabelVisible++;
@@ -75,7 +81,7 @@ const sets: Array<{ name: string; bills: Bill[]; privateCount: number; mustHide:
     name: 'first 64 bills', bills: (first as { bills: Bill[] }).bills, privateCount: 310,
     mustHide: ['hard00 LANDLINE (080) 7229 7102', 'hard05 LANDLINE (080) 9788 6897', 'hard10 LANDLINE (0821) 2293 658',
       'hard15 LANDLINE (044) 2557 7502', 'hard13 BANK 6437 6326 5127 3196 76'],
-    totals: { hidden: 305, hiddenWithLabelVisible: 7, related: 5, unrelated: 0, notRead: 0, previewBills: 47 },
+    totals: { hidden: 305, hiddenWithLabelVisible: 7, related: 5, unrelated: 0, notRead: 0, previewBills: 49 },
     overHidden: { EWAY: 64, HSN: 6, AMOUNT: 6 },
   },
   {
@@ -83,8 +89,15 @@ const sets: Array<{ name: string; bills: Bill[]; privateCount: number; mustHide:
     mustHide: ['fresh30 BANK 8613 5061 1962', 'fresh25 BANK 7552 7265 7128 9010', 'fresh26 LANDLINE [044] 43087740',
       'fresh18 PHONE (+91) 9738994895', 'fresh26 PHONE (+91) 8115403259', 'fresh10 BANK 41335 35554 52147555',
       'fresh03 LANDLINE 040 - 83294496', 'fresh15 LANDLINE 0484 - 3103832', 'fresh21 LANDLINE 044 - 85526798', 'fresh27 LANDLINE 080 - 56598603'],
-    totals: { hidden: 192, hiddenWithLabelVisible: 6, related: 3, unrelated: 0, notRead: 3, previewBills: 27 },
+    totals: { hidden: 192, hiddenWithLabelVisible: 6, related: 3, unrelated: 0, notRead: 3, previewBills: 29 },
     overHidden: { REF: 36, AMOUNT: 3, HSN: 1 },
+  },
+  {
+    name: '30 bills of the third review', bills: (review3 as { bills: Bill[] }).bills, privateCount: 213,
+    mustHide: ['rev3_03 LANDLINE 53850487', 'rev3_07 LANDLINE 41055215', 'rev3_13 LANDLINE 71302080', 'rev3_17 LANDLINE 11708862',
+      'rev3_23 LANDLINE 4003447', 'rev3_27 LANDLINE 93855903', 'rev3_12 LANDLINE 0712-8629 768'],
+    totals: { hidden: 191, hiddenWithLabelVisible: 11, related: 11, unrelated: 1, notRead: 10, previewBills: 27 },
+    overHidden: { AMOUNT: 23, HSN: 7, GSTIN: 1 },
   },
 ];
 

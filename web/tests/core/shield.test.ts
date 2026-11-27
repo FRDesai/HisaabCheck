@@ -76,7 +76,7 @@ describe('runShield long digit runs (bank accounts without a recognised label)',
   it('asks the human when unclaimed pieces of one digit run hold 9 or more digits', () => {
     const r = runShield(wordsFromLines(['Beneficiary 50100 2 34567891']), 0.6);
     expect(r.matches).toEqual([]);
-    expect(r.uncertainReasons).toEqual(['long_digit_run:0']);
+    expect(r.uncertainReasons).toEqual(['long_digit_run:0', 'bank_details_without_account:0']);
   });
   it('hides a short leftover of a longer digit run instead of leaving it visible', () => {
     const r = runShield(wordsFromLines(['Ref 2341 2341 2340 5']), 0.6);
@@ -148,9 +148,10 @@ describe('runShield round 3: decimal tails, brackets, prefixes, narrower excuses
   it('the bracketed country code is part of the phone match', () => {
     expect(runShield(wordsFromLines(['Call (+91) 9738994895']), 0.6).matches).toEqual([{ type: 'PHONE', wordIndexes: [1, 2] }]);
   });
-  it('a two-group number with a 4-digit decimal tail asks, a rate next to an HSN code does not', () => {
+  it('a two-group number with a 3- or 4-digit decimal tail asks, a 2-digit one does not', () => {
     expect(runShield(wordsFromLines(['Pay to 50100234 5678.00']), 0.6).uncertainReasons).toEqual(['long_digit_run:0']);
-    expect(runShield(wordsFromLines(['Copper Wire 18842067 784.00 10,976.00']), 0.6)).toMatchObject({ matches: [], uncertain: false });
+    expect(runShield(wordsFromLines(['Copper Wire 18842067 784.00 10,976.00']), 0.6).uncertainReasons).toEqual(['long_digit_run:0']);
+    expect(runShield(wordsFromLines(['Copper Wire 18842067 78.00 1,976.00']), 0.6)).toMatchObject({ matches: [], uncertain: false });
   });
   it('a decimal tail joined to a hidden run is hidden with it, an amount with grouping commas is not', () => {
     const r = runShield(wordsFromLines(['Pay to 41335535554 52147555.00']), 0.6);
@@ -172,6 +173,38 @@ describe('runShield round 3: decimal tails, brackets, prefixes, narrower excuses
   it('dates are blanked only when the day and month are plausible', () => {
     expect(runShield(wordsFromLines(['Date 31-12-2026 Due 2026-12-31 On 02.11.26']), 0.6)).toMatchObject({ matches: [], uncertain: false });
     expect(runShield(wordsFromLines(['Ref 5010-02-3456 7891']), 0.6).uncertainReasons).toEqual(['long_digit_run:0']);
+  });
+});
+
+describe('runShield round 4: phone lists, bank details without an account, more separators', () => {
+  it('each further number of a phone list is hidden as a phone, an amount after the phone is not', () => {
+    expect(runShield(wordsFromLines(['Ph 040-53850486, 53850487']), 0.6).matches).toEqual([{ type: 'PHONE', wordIndexes: [1] }, { type: 'PHONE', wordIndexes: [2] }]);
+    expect(runShield(wordsFromLines(['Tel 080 41055291 / 41055215 / 16']), 0.6).matches.map((m) => m.type)).toEqual(['PHONE', 'PHONE', 'PHONE']);
+    expect(runShield(wordsFromLines(['Ph 080-41055291, 4500.00']), 0.6).matches).toEqual([{ type: 'PHONE', wordIndexes: [1] }]);
+  });
+  it('bank details with no account found ask with their own reason', () => {
+    expect(runShield(wordsFromLines(['Bank: Example Bank', 'IFSC: HDFC0001234']), 0.6).uncertainReasons).toEqual(['bank_details_without_account:0']);
+    expect(runShield(wordsFromLines(['IFSC: HDFC0001234']), 0.6).uncertain).toBe(false);
+  });
+  it('groups joined by a spaced hyphen, a spaced slash or a dot and a space are one run', () => {
+    for (const line of ['Pay to 5010 - 0234 - 5678 - 91', 'Pay to 5010 / 0234 / 5678', 'Pay to 5010.0234 5678.00', 'Pay to 5010,0234 5678.00']) {
+      const words = wordsFromLines([line]);
+      const hidden = new Set(runShield(words, 0.6).matches.flatMap((m) => m.wordIndexes));
+      expect([line, words.every((w, i) => !/\d/.test(w.text) || hidden.has(i))]).toEqual([line, true]);
+    }
+  });
+  it('the digits of an IFSC do not pull the amount after it into a run', () => {
+    const r = runShield(wordsFromLines(['NEFT 09372140 2659670744 IDIB0069888 45430.00']), 0.6);
+    expect(r.matches.flatMap((m) => m.wordIndexes)).not.toContain(4);
+  });
+  it('a 16-character GSTIN-like word excuses low confidence only with a right check character', () => {
+    expect(runShield(wordsFromLines(['GSTIN 27AAPFU0939F1ZVX'], 40), 0.6).uncertainReasons).toEqual([]);
+    expect(runShield(wordsFromLines(['Pay to 47ZB8204072O1670'], 40), 0.6).uncertain).toBe(true);
+  });
+  it('a bracketed code without its 0 is a phone only when it makes 10 digits or the line has a phone label', () => {
+    expect(runShield(wordsFromLines(['(80) 2345 6789']), 0.6).matches.map((m) => m.type)).toEqual(['PHONE']);
+    expect(runShield(wordsFromLines(['Rice [12] 345678']), 0.6).matches).toEqual([]);
+    expect(runShield(wordsFromLines(['Tel: [12] 345678']), 0.6).matches.map((m) => m.type)).toEqual(['PHONE']);
   });
 });
 

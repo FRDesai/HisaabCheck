@@ -1,5 +1,5 @@
 import type { OcrWord, PiiMatch, PiiType, ShieldResult } from '../types';
-import { GSTIN_PATTERN } from './gstin';
+import { GSTIN_PATTERN, gstinCheckChar } from './gstin';
 import { isValidVerhoeff } from './verhoeff';
 
 interface Line { text: string; spans: Array<{ word: number; start: number; end: number }> }
@@ -21,7 +21,7 @@ function wordsIn(line: Line, start: number, end: number): number[] {
 }
 
 const PAN = /\b[A-Z]{3}[ABCFGHLJPT][A-Z]\d{4}[A-Z]\b/g;
-// Aadhaar-shaped (exact and near-miss alike), and not a piece of a longer digit run: that is left whole to LONG_RUN.
+// Aadhaar-shaped (exact and near-miss alike), and not a piece of a longer digit run: that is left whole to the long-run rule.
 const AADHAAR = /(?<!\d[\s.,-]?)\b[2-9]\d{3}[\s-]?\d{4}[\s-]?\d{4}\b(?![\s.,-]?\d)/g;
 const IFSC = /\b[A-Z]{4}0[A-Z0-9]{6}\b/g;
 /**
@@ -36,42 +36,139 @@ function isNearIfsc(t: string): boolean {
   return odd.length <= 1 && odd.every((c) => TO_LETTER[c] !== undefined) && /[A-Z]/.test(bank[3])
     && digitCount(t.slice(5)) >= MIN_NEAR_IFSC_BRANCH_DIGITS;
 }
-/** A mobile, with an optional country code (also in brackets: "(+91)", "(91)") or 0, and its first five digits possibly in brackets. */
-const MOBILE = /(?<!\d)(?:\(\+?91\)[\s-]?|\+?91[\s-]?|0)?\(?[6-9]\d{4}\)?[\s-]?\d{5}(?!\d)/g;
+/**
+ * A mobile, with an optional country code (also in brackets: "(+91)", "(91)") or 0, its first five digits possibly in
+ * brackets, and its two halves joined by nothing, a space, a hyphen or a comma.
+ */
+const MOBILE = /(?<!\d)(?:\(\+?91\)[\s-]?|\+?91[\s-]?|0)?\(?[6-9]\d{4}\)?[\s,-]?\d{5}(?!\d)/g;
 const LANDLINE = /\b0\d{2,4}[\s-]?\d{3,4}[\s-]?\d{4}\b/g;
 /**
- * A landline with its STD code in brackets, matched with or without a label: ( [ { | open, ) ] } | close, one of the
- * two may be lost by OCR, and the leading 0 may be read as O. An STD code without its 0 needs both brackets.
+ * A landline with its STD code in brackets, matched with or without a label: ( [ { | open, ) ] } | close (spaces
+ * inside allowed), one of the two may be lost by OCR, and the leading 0 may be read as O.
  */
-const PAREN_LANDLINE = /(?:[([{|][0O]\d{2,4}[)\]}|]?|[([{|][1-9]\d{1,3}[)\]}|]|(?<!\d)[0O]\d{2,4}[)\]}|])[\s-]?\d(?:[\s-]?\d){5,7}(?!\d)/g;
+const PAREN_LANDLINE = /(?:[([{|]\s?[0O]\d{2,4}\s?[)\]}|]?|(?<!\d)[0O]\d{2,4}\s?[)\]}|])[\s-]?\d(?:[\s-]?\d){5,7}(?!\d)/g;
+/** An STD code without its 0, in both brackets: a phone only on a phone-labelled line or when it makes 10 digits in all. */
+const PAREN_NO_ZERO_LANDLINE = /[([{|]\s?[1-9]\d{1,3}\s?[)\]}|][\s-]?\d(?:[\s-]?\d){5,7}(?!\d)/g;
+const NATIONAL_NUMBER_DIGITS = 10;
 /** A landline without brackets or label: STD code, a hyphen (spaces around it allowed), 6 to 8 digits. */
 const HYPHEN_LANDLINE = /(?<![\dA-Z])0\d{2,4}\s?-\s?\d{6,8}(?!\d)/g;
+/** An STD code, a hyphen and a short group: a landline whose rest OCR lost (hidden as a possible id). */
+const CUT_LANDLINE = /(?<![\dA-Z])0\d{2,4}-\d{3,5}(?!\d)/g;
 const BANK = /\b\d(?:[\s-]?\d){8,17}\b/g;
+/** An invoice or bill label right before `start` on the line (at most 12 characters and no digit after it). */
+function invoiceLabelBefore(text: string, start: number): boolean {
+  const before = text.slice(0, start);
+  let end = -1;
+  for (const m of before.matchAll(/\b(?:INVOICE|INV|BILL)\b/g)) end = m.index! + m[0].length;
+  return end >= 0 && before.length - end <= 12 && !/\d/.test(before.slice(end));
+}
+
 /*
- * Long digit runs are looked for in a copy of the line where amounts, dates and times are blanked out (see
- * maskForRuns), so they never join a run; nothing else excuses a run.
- * LONG_RUN: a number that may be a bank account even though no label was read (OCR mangles labels: "A/C" came back as
- * "AJC"). Contiguous digits, or groups of at least 3 digits (the last may have 2) joined by one space, hyphen, dot or comma;
- * 9 or more digits in all (checked in code). Letters may touch it.
+ * Digit runs. Groups of digits are joined by a separator that is followed by a digit:
+ * - a hyphen, with one optional space on each side;
+ * - a slash with a space on each side;
+ * - one space or one dot;
+ * - (ANY and LOOSE) a comma;
+ * - (LOOSE) a comma and a space.
+ * The run rules are scanned by hand (the same algorithm in Shield.kt), on a copy of the line where dates, times and
+ * amounts are blanked out (see maskForRuns), so those never join a run; nothing else excuses a run.
  */
-const LONG_RUN = /(?<!\d)\d{3,}(?:[\s.,-]\d{3,})*(?:[\s.,-]\d{2})?(?!\d)/g;
-/** Any grouping: a run OCR may have split in pieces LONG_RUN does not accept. */
-const LOOSE_RUN = /(?<!\d)\d(?:[\s.,-]?\d){8,}(?!\d)/g;
-/** Every maximal digit run, any length: a match inside one must not leave the rest of it visible. */
-const ANY_RUN = /\d(?:[\s.,-]?\d)*/g;
+type SepKind = 'long' | 'any' | 'loose';
+const isDigit = (c: string | undefined) => c !== undefined && c >= '0' && c <= '9';
+const isWs = (c: string | undefined) => c !== undefined && /\s/.test(c);
+/** Length of a separator of `kind` starting at `j` whose next character satisfies `next`, or 0. */
+function sepLen(t: string, j: number, kind: SepKind, next: (c: string | undefined) => boolean = isDigit): number {
+  const forms: Array<(k: number) => number> = [
+    (k) => (isWs(t[k]) && t[k + 1] === '-' && isWs(t[k + 2]) ? 3 : 0),
+    (k) => (isWs(t[k]) && t[k + 1] === '-' ? 2 : 0),
+    (k) => (t[k] === '-' && isWs(t[k + 1]) ? 2 : 0),
+    (k) => (t[k] === '-' ? 1 : 0),
+    (k) => (isWs(t[k]) && t[k + 1] === '/' && isWs(t[k + 2]) ? 3 : 0),
+    (k) => (isWs(t[k]) || t[k] === '.' ? 1 : 0),
+  ];
+  if (kind !== 'long') forms.push((k) => (t[k] === ',' ? 1 : 0));
+  if (kind === 'loose') forms.push((k) => (t[k] === ',' && isWs(t[k + 1]) ? 2 : 0));
+  for (const f of forms) {
+    const n = f(j);
+    if (n > 0 && next(t[j + n])) return n;
+  }
+  return 0;
+}
+const digitBlockEnd = (t: string, i: number) => { let j = i; while (isDigit(t[j])) j++; return j; };
+/** Every maximal run of digits joined by separators of `kind`, as [start, end) ranges. */
+function runs(t: string, kind: SepKind): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  let i = 0;
+  while (i < t.length) {
+    if (!isDigit(t[i])) { i++; continue; }
+    let j = i + 1;
+    for (;;) {
+      if (isDigit(t[j])) { j++; continue; }
+      const n = sepLen(t, j, kind);
+      if (n === 0) break;
+      j += n + 1;
+    }
+    out.push([i, j]);
+    i = j;
+  }
+  return out;
+}
+/**
+ * A number that may be a bank account even though no label was read (OCR mangles labels: "A/C" came back as "AJC"):
+ * contiguous digits, or groups of at least 3 digits (the last may have 2) joined by `long` separators; 9 or more digits
+ * in all (checked by the caller). Letters may touch it.
+ */
+function longRuns(t: string): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  let i = 0;
+  while (i < t.length) {
+    if (!isDigit(t[i]) || isDigit(t[i - 1])) { i++; continue; }
+    const first = digitBlockEnd(t, i);
+    if (first - i < 3) { i = first; continue; }
+    let e = first;
+    for (;;) {
+      const n = sepLen(t, e, 'long');
+      if (n === 0) break;
+      const m = digitBlockEnd(t, e + n);
+      const len = m - (e + n);
+      if (len >= 3) { e = m; continue; }
+      if (len === 2) e = m;
+      break;
+    }
+    out.push([i, e]);
+    i = e;
+  }
+  return out;
+}
 const MIN_RUN_DIGITS = 9;
 const digitCount = (t: string) => t.replace(/\D/g, '').length;
+/**
+ * True when the amount starting at `i` is the third or later group of a digit run: right before it, a separator, a
+ * group of 3 to 40 digits, a separator and at least 3 digits (any `loose` separators). There it is an account's tail.
+ */
+function afterTwoGroups(t: string, i: number): boolean {
+  for (let l2 = 1; l2 <= 3; l2++) {
+    const p = i - l2;
+    if (p < 1 || sepLen(t, p, 'loose') !== l2 || !isDigit(t[p - 1])) continue;
+    let b = p;
+    while (b > 0 && isDigit(t[b - 1])) b--;
+    if (p - b < 3 || p - b > 40) continue;
+    for (let l1 = 1; l1 <= 3; l1++) {
+      const q = b - l1;
+      if (q >= 3 && sepLen(t, q, 'loose') === l1 && isDigit(t[q - 1]) && isDigit(t[q - 2]) && isDigit(t[q - 3])) return true;
+    }
+  }
+  return false;
+}
 /*
  * What maskForRuns blanks out, in this order: dates (day-month-year or year-month-day with plausible day and month),
  * times, and amounts. An amount has grouping commas (at most 9 digits before its decimal part) or a decimal part with
- * at most 8 digits before it. An amount that is the third or later group of a digit run (two groups of 3 or more
- * digits, each followed by one space or hyphen, right before it) is not blanked: there it is the tail of an account.
+ * at most 8 digits before it. An amount that is the third or later group of a digit run is not blanked.
  */
-const AFTER_TWO_GROUPS = String.raw`(?<!\d{3}[\s-]\d{3,40}[\s-])`;
 const DATE_MASK = /(?<!\d|\d[.,/-])(?:(?:0?[1-9]|[12]\d|3[01])[-/.](?:0?[1-9]|1[0-2])[-/.](?:\d{4}|\d{2})|\d{4}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01]))(?!\d|[.,/-]\d)/g;
 const TIME_MASK = /(?<!\d|\d[.,:])\d{1,2}:\d{2}(?::\d{2})?(?!\d|[.,:]\d)/g;
-const COMMA_AMOUNT_MASK = new RegExp(String.raw`(?<!\d|\d[.,])${AFTER_TWO_GROUPS}\d{1,3}(?:,\d{2,3})+(?:\.\d{1,2})?(?!\d|[.,]\d)`, 'g');
-const DECIMAL_AMOUNT_MASK = new RegExp(String.raw`(?<!\d|\d[.,])${AFTER_TWO_GROUPS}\d{1,8}[.,]\d{1,2}(?!\d|[.,]\d)`, 'g');
+const COMMA_AMOUNT_MASK = /(?<!\d|\d[.,])\d{1,3}(?:,\d{2,3})+(?:\.\d{1,2})?(?!\d|[.,]\d)/g;
+const DECIMAL_AMOUNT_MASK = /(?<!\d|\d[.,])\d{1,8}[.,]\d{1,2}(?!\d|[.,]\d)/g;
 const MAX_COMMA_AMOUNT_DIGITS = 9;
 const DATE_TIME_MARK = '~';
 const COMMA_AMOUNT_MARK = '=';
@@ -84,22 +181,41 @@ const decimalIntegerDigits = (amount: string) => digitCount(amount.replace(/[.,]
 function maskForRuns(text: string, decimalAmounts = true): string {
   const blank = (mark: string) => (m: string) => mark.repeat(m.length);
   const t = text.replace(new RegExp(DATE_MASK.source, 'g'), blank(DATE_TIME_MARK))
-    .replace(new RegExp(TIME_MASK.source, 'g'), blank(DATE_TIME_MARK))
-    .replace(new RegExp(COMMA_AMOUNT_MASK.source, 'g'), (m) => (integerDigits(m) <= MAX_COMMA_AMOUNT_DIGITS ? COMMA_AMOUNT_MARK.repeat(m.length) : m));
-  return decimalAmounts ? t.replace(new RegExp(DECIMAL_AMOUNT_MASK.source, 'g'), blank(DECIMAL_AMOUNT_MARK)) : t;
+    .replace(new RegExp(TIME_MASK.source, 'g'), blank(DATE_TIME_MARK));
+  const c = t.replace(new RegExp(COMMA_AMOUNT_MASK.source, 'g'), (m: string, at: number) =>
+    (integerDigits(m) <= MAX_COMMA_AMOUNT_DIGITS && !afterTwoGroups(t, at) ? COMMA_AMOUNT_MARK.repeat(m.length) : m));
+  return decimalAmounts
+    ? c.replace(new RegExp(DECIMAL_AMOUNT_MASK.source, 'g'), (m: string, at: number) => (afterTwoGroups(c, at) ? m : DECIMAL_AMOUNT_MARK.repeat(m.length)))
+    : c;
 }
-const MIN_JOINED_TAIL_DIGITS = 4;
+/** A digit group joined to a decimal amount asks when the amount has this many integer digits or more (and 9+ in all). */
+const MIN_JOINED_TAIL_DIGITS = 3;
 /**
- * In masked text: a digit group of 3 or more joined by one space or hyphen to a blanked decimal amount without grouping
- * commas right after it (an amount with grouping commas is never the tail of an account).
+ * In masked text: each blanked decimal amount (without grouping commas, which is never an account's tail) with a group
+ * of 3 or more digits joined to it by a `loose` separator right before it, as [group start, amount end).
  */
-const GROUP_THEN_AMOUNT = /(?<!\d)\d{3,}[\s-]#+/g;
+function groupThenAmount(t: string): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (let a = 0; a < t.length; a++) {
+    if (t[a] !== DECIMAL_AMOUNT_MARK || t[a - 1] === DECIMAL_AMOUNT_MARK) continue;
+    let end = a;
+    while (t[end] === DECIMAL_AMOUNT_MARK) end++;
+    for (let l = 1; l <= 3; l++) {
+      const p = a - l;
+      if (p < 1 || sepLen(t, p, 'loose', (c) => c === DECIMAL_AMOUNT_MARK) !== l || !isDigit(t[p - 1])) continue;
+      let b = p;
+      while (b > 0 && isDigit(t[b - 1])) b--;
+      if (p - b >= 3) { out.push([b, end]); break; }
+    }
+  }
+  return out;
+}
 const NEAR_PAN = /\b[A-Z0-9]{10}\b/g;
 // Digit look-alikes, used to un-confuse OCR misreads.
 const TO_DIGIT: Record<string, string> = { O: '0', I: '1', L: '1', S: '5', B: '8', Z: '2' };
 const TO_LETTER: Record<string, string> = { '0': 'O', '1': 'I', '5': 'S', '8': 'B', '2': 'Z' };
 const PAN_SHAPE = /^[A-Z]{5}\d{4}[A-Z]$/;
-/** At most this many look-alike swaps for a near-PAN; real misreads are 1–2 characters, invoice numbers need more. */
+/** At most this many look-alike swaps for a near-PAN; real misreads are 1 to 2 characters, invoice numbers need more. */
 const MAX_NEAR_PAN_SWAPS = 2;
 const MIN_NEAR_MOBILE_DIGIT_SHARE = 0.7;
 type LabelledType = Exclude<PiiType, 'POSSIBLE_ID'>;
@@ -111,6 +227,8 @@ const LABELS: Record<LabelledType, RegExp> = {
   // A/C also as OCR reads it: the slash as | \ 1 I J L ! 7 (lower-case l is upper-cased to L before matching).
   BANK_ACCOUNT: /\bACC(?:OUNT|T)?\.?\s*(?:NO|NUMBER)\b|\bACC\s*#|\bACCOUNT\b|\bACCT\b|\bA\/C(?:\s*(?:NO|NUMBER)\b)?|\bA[|\\1IJL!7]C\b(?:\s*(?:NO|NUMBER)\b)?|\b(?:AC|CA)\s*NO\b/g,
 };
+/** Words that mean the bill carries bank details (besides an account label or an IFSC). */
+const BANK_CUE = /\b(?:BANK|BRANCH|NEFT|RTGS|IMPS|BENEFICIARY|REMIT(?:TANCE)?)\b/;
 const PARTIAL = /\b[A-Z]{5}\d{1,3}\b/;
 const PII_LIKE = /\d{3,}|[A-Z]{3,}\d/;
 /** Table-border characters OCR glues to the start or end of a cell's word. */
@@ -123,17 +241,24 @@ const GSTIN_SKELETON = /^\d{2}[A-Z]{5}\d{4}[A-Z][A-Z0-9]Z[A-Z0-9]$/;
 const GSTIN_CLASSES = 'DDLLLLLDDDDLAZA';
 /**
  * True when the word has the GSTIN skeleton once digit/letter look-alikes are swapped for what each position wants
- * (Z also read as 2 or 7). A 16-character word qualifies when dropping one character (an OCR insertion) leaves one.
+ * (Z also read as 2 or 7). A 16-character word qualifies only when dropping one character (an OCR insertion) leaves a
+ * skeleton whose check character is right: without that, about 1 in 100 look-alike-heavy account numbers fit.
  */
 function hasGstinSkeleton(s: string): boolean {
-  const fits = (w: string) => w.length === GSTIN_CLASSES.length && GSTIN_SKELETON.test([...w].map((c, i) => {
+  const fixed = (w: string) => [...w].map((c, i) => {
     const want = GSTIN_CLASSES[i];
     if (want === 'D') return TO_DIGIT[c] ?? c;
     if (want === 'L') return TO_LETTER[c] ?? c;
     if (want === 'Z') return c === '2' || c === '7' ? 'Z' : c;
     return c;
-  }).join(''));
-  if (s.length === GSTIN_CLASSES.length + 1) return [...s].some((_, i) => fits(s.slice(0, i) + s.slice(i + 1)));
+  }).join('');
+  const fits = (w: string) => w.length === GSTIN_CLASSES.length && GSTIN_SKELETON.test(fixed(w));
+  if (s.length === GSTIN_CLASSES.length + 1) {
+    return [...s].some((_, i) => {
+      const w = s.slice(0, i) + s.slice(i + 1);
+      return fits(w) && gstinCheckChar(fixed(w).slice(0, 14)) === fixed(w)[14];
+    });
+  }
   return fits(s);
 }
 /**
@@ -170,35 +295,64 @@ function isNearMobile(original: string): boolean {
   return /[OILSBZ]/.test(original) && alnum.length > 0 && digits / alnum.length >= MIN_NEAR_MOBILE_DIGIT_SHARE;
 }
 
+/**
+ * The next number of a phone list ending at `e`: an optional space, a comma or slash, an optional space, then 6 to 8
+ * digits (another local number) or 2 to 4 digits (an alternative ending), not followed by a decimal part. Its digits
+ * as [start, end), or null.
+ */
+function phoneListNext(t: string, e: number): [number, number] | null {
+  let k = e;
+  if (isWs(t[k])) k++;
+  if (t[k] !== ',' && t[k] !== '/') return null;
+  k++;
+  if (isWs(t[k])) k++;
+  const m = digitBlockEnd(t, k);
+  const len = m - k;
+  if (!((len >= 6 && len <= 8) || (len >= 2 && len <= 4))) return null;
+  if ((t[m] === '.' || t[m] === ',') && isDigit(t[m + 1])) return null;
+  return [k, m];
+}
+
+/** Types whose digits sit inside a letter code: their words never pull a neighbouring number into a run. */
+const CODE_TYPES = new Set<PiiType>(['IFSC', 'PAN']);
+
 /** A word that could be (part of) a private number: any digit at all (OCR may split a number into short pieces). */
 const SUSPICIOUS = (t: string) => /\d/.test(t);
 
 export function runShield(words: OcrWord[], consentOcrThreshold: number): ShieldResult {
   const lines = buildLines(words);
   const gstinWords = new Set<number>();
-  const claimed = new Set<number>();
+  const claimed = new Map<number, PiiType>();
   const matches: PiiMatch[] = [];
   // kind: which label a match can satisfy. Exact matches use their own type; a POSSIBLE_ID uses the type it nearly is.
   const meta: Array<{ kind: LabelledType; li: number; start: number }> = [];
   // Words hidden only because they are a long digit run: for label checks they still count as a possibly missed value.
   const longRunWords = new Set<number>();
   const reasons: string[] = [];
+  let phoneEnds: number[] = [];
 
-  // `searchText`, if given, is a same-length transform of the line (look-alike swaps); `ok` gets the ORIGINAL text.
-  const find = (li: number, re: RegExp, type: PiiType, kind: LabelledType, ok: (m: string) => boolean = () => true, searchText?: string): number[] => {
+  const claim = (li: number, start: number, idx: number[], type: PiiType, kind: LabelledType) => {
+    idx.forEach((i) => claimed.set(i, type));
+    matches.push({ type, wordIndexes: idx });
+    meta.push({ kind, li, start });
+  };
+  // `hits` are [start, end) ranges of the line (or of a same-length transform of it); `ok` gets the ORIGINAL text.
+  const findIn = (li: number, hits: Array<[number, number]>, type: PiiType, kind: LabelledType, ok: (m: string, start: number) => boolean): number[] => {
     const found: number[] = [];
     const line = lines[li];
-    for (const m of (searchText ?? line.text).matchAll(new RegExp(re.source, 'g'))) {
-      const idx = wordsIn(line, m.index!, m.index! + m[0].length);
-      const original = line.text.slice(m.index!, m.index! + m[0].length);
-      if (idx.some((i) => claimed.has(i) || gstinWords.has(i)) || !ok(original)) continue;
-      idx.forEach((i) => claimed.add(i));
-      matches.push({ type, wordIndexes: idx });
-      meta.push({ kind, li, start: m.index! });
+    for (const [start, end] of hits) {
+      const idx = wordsIn(line, start, end);
+      const original = line.text.slice(start, end);
+      if (idx.some((i) => claimed.has(i) || gstinWords.has(i)) || !ok(original, start)) continue;
+      claim(li, start, idx, type, kind);
+      if (type === 'PHONE') phoneEnds.push(end);
       found.push(...idx);
     }
     return found;
   };
+  // `searchText`, if given, is a same-length transform of the line (look-alike swaps).
+  const find = (li: number, re: RegExp, type: PiiType, kind: LabelledType, ok: (m: string, start: number) => boolean = () => true, searchText?: string) =>
+    findIn(li, [...(searchText ?? lines[li].text).matchAll(new RegExp(re.source, 'g'))].map((m) => [m.index!, m.index! + m[0].length] as [number, number]), type, kind, ok);
 
   lines.forEach((line) => {
     for (const m of line.text.matchAll(new RegExp(GSTIN_PATTERN.source, 'g'))) {
@@ -209,38 +363,47 @@ export function runShield(words: OcrWord[], consentOcrThreshold: number): Shield
   lines.forEach((line, li) => {
     const prev = lines[li - 1]?.text ?? '';
     const runText = maskForRuns(line.text);
+    const phoneLabel = hasLabel(line.text, 'PHONE');
+    const notAfterInvoice = (_: string, start: number) => !invoiceLabelBefore(line.text, start);
+    phoneEnds = [];
     find(li, AADHAAR, 'AADHAAR', 'AADHAAR', (s) => isValidVerhoeff(s.replace(/[\s-]/g, '')));
     find(li, IFSC, 'IFSC', 'IFSC');
     find(li, NEAR_IFSC, 'IFSC', 'IFSC', isNearIfsc);
     find(li, PAN, 'PAN', 'PAN');
     find(li, MOBILE, 'PHONE', 'PHONE');
     find(li, PAREN_LANDLINE, 'PHONE', 'PHONE');
-    find(li, HYPHEN_LANDLINE, 'PHONE', 'PHONE');
-    if (hasLabel(line.text, 'PHONE')) find(li, LANDLINE, 'PHONE', 'PHONE');
+    find(li, PAREN_NO_ZERO_LANDLINE, 'PHONE', 'PHONE', (s) => phoneLabel || digitCount(s) === NATIONAL_NUMBER_DIGITS);
+    find(li, HYPHEN_LANDLINE, 'PHONE', 'PHONE', notAfterInvoice);
+    if (phoneLabel) find(li, LANDLINE, 'PHONE', 'PHONE');
+    // The rest of a phone list: "040-53850486, 53850487", "080 41055291 / 41055215", "080-41055291 / 92".
+    for (let k = 0; k < phoneEnds.length; k++) {
+      const next = phoneListNext(line.text, phoneEnds[k]);
+      if (next) findIn(li, [next], 'PHONE', 'PHONE', () => true);
+    }
     if (hasLabel(line.text, 'BANK_ACCOUNT') || hasLabel(prev, 'BANK_ACCOUNT')) find(li, BANK, 'BANK_ACCOUNT', 'BANK_ACCOUNT');
     // Near-misses, after every exact matcher so a real type always wins. Over-redaction is harmless; a miss is a leak.
     find(li, AADHAAR, 'POSSIBLE_ID', 'AADHAAR'); // Aadhaar-shaped but failing Verhoeff (valid ones were claimed above)
     find(li, NEAR_PAN, 'POSSIBLE_ID', 'PAN', isNearPan);
     find(li, MOBILE, 'POSSIBLE_ID', 'PHONE', isNearMobile, toDigits(line.text));
+    find(li, CUT_LANDLINE, 'POSSIBLE_ID', 'PHONE', notAfterInvoice);
     // Last: any other run that could be a bank account is hidden too. A miss is a leak; this only hides a reference
     // number or two from the model, and the maths checks never use such numbers.
-    find(li, LONG_RUN, 'POSSIBLE_ID', 'BANK_ACCOUNT', (t) => digitCount(t) >= MIN_RUN_DIGITS, runText).forEach((i) => longRunWords.add(i));
+    findIn(li, longRuns(runText), 'POSSIBLE_ID', 'BANK_ACCOUNT', (t) => digitCount(t) >= MIN_RUN_DIGITS).forEach((i) => longRunWords.add(i));
   });
 
   // No match may leave the rest of its digit run visible: the unclaimed digit-bearing words of a run that holds a
   // match are hidden too, as one POSSIBLE_ID per run (simpler than widening a match and changing its type). Decimal
   // amounts are not blanked here, so a decimal tail joined to a hidden number is hidden with it; dates, times and
-  // amounts with grouping commas still are (they are never the tail of an account).
+  // amounts with grouping commas still are (they are never the tail of an account). The digits of an IFSC or PAN do
+  // not count as a match here: they are part of a letter code, not of a number that continues.
   lines.forEach((line) => {
-    for (const m of maskForRuns(line.text, false).matchAll(new RegExp(ANY_RUN.source, 'g'))) {
-      const from = m.index!;
-      const to = from + m[0].length;
+    for (const [from, to] of runs(maskForRuns(line.text, false), 'any')) {
       const inRun = line.spans.filter((s) => s.start < to && s.end > from && !gstinWords.has(s.word));
-      if (!inRun.some((s) => claimed.has(s.word))) continue;
+      if (!inRun.some((s) => claimed.has(s.word) && !CODE_TYPES.has(claimed.get(s.word)!))) continue;
       const rest = inRun.filter((s) => !claimed.has(s.word) && SUSPICIOUS(line.text.slice(Math.max(s.start, from), Math.min(s.end, to))))
         .map((s) => s.word);
       if (rest.length === 0) continue;
-      rest.forEach((i) => { claimed.add(i); longRunWords.add(i); });
+      rest.forEach((i) => { claimed.set(i, 'POSSIBLE_ID'); longRunWords.add(i); });
       matches.push({ type: 'POSSIBLE_ID', wordIndexes: rest });
     }
   });
@@ -271,18 +434,15 @@ export function runShield(words: OcrWord[], consentOcrThreshold: number): Shield
     const visibleDigits = (from: number, to: number) => line.spans
       .filter((s) => s.start < to && s.end > from && !claimed.has(s.word) && !gstinWords.has(s.word))
       .reduce((sum, s) => sum + digitCount(line.text.slice(Math.max(s.start, from), Math.min(s.end, to))), 0);
-    for (const m of masked.matchAll(new RegExp(LOOSE_RUN.source, 'g'))) {
-      if (visibleDigits(m.index!, m.index! + m[0].length) >= MIN_RUN_DIGITS) reasons.push(`long_digit_run:${li}`);
+    for (const [from, to] of runs(masked, 'loose')) {
+      if (digitCount(masked.slice(from, to)) >= MIN_RUN_DIGITS && visibleDigits(from, to) >= MIN_RUN_DIGITS) reasons.push(`long_digit_run:${li}`);
     }
     // A digit group joined to a decimal amount: a two-group account with a decimal tail cannot be told from an HSN code
-    // next to an amount whose commas OCR dropped, so when the amount has 4 or more integer digits (an account's groups
-    // do; a rate of 784.00 next to an HSN code does not), the two make 9 or more digits and nothing of them is hidden, ask.
-    for (const m of masked.matchAll(new RegExp(GROUP_THEN_AMOUNT.source, 'g'))) {
-      const from = m.index!;
-      const groupEnd = from + digitCount(m[0]);
-      let to = from + m[0].length;
-      while (masked[to] === DECIMAL_AMOUNT_MARK) to++;
-      const tail = decimalIntegerDigits(line.text.slice(groupEnd + 1, to));
+    // next to an amount whose commas OCR dropped, so when the amount has 3 or more integer digits, the two make 9 or more
+    // digits and nothing of them is hidden, ask.
+    for (const [from, to] of groupThenAmount(masked)) {
+      const groupEnd = digitBlockEnd(masked, from);
+      const tail = decimalIntegerDigits(line.text.slice(masked.indexOf(DECIMAL_AMOUNT_MARK, groupEnd), to));
       const inRange = line.spans.filter((s) => s.start < to && s.end > from && !gstinWords.has(s.word));
       if (tail >= MIN_JOINED_TAIL_DIGITS && (groupEnd - from) + tail >= MIN_RUN_DIGITS && !inRange.some((s) => claimed.has(s.word))) {
         reasons.push(`long_digit_run:${li}`);
@@ -300,6 +460,14 @@ export function runShield(words: OcrWord[], consentOcrThreshold: number): Shield
       }
     });
   });
+
+  // Bank details with no account found: OCR may have dropped the account's row (it does, on bank and payment tables).
+  // A bank cue is an account label or a BANK_CUE word (an IFSC alone is not one: it is often printed without an account);
+  // an account is a BANK_ACCOUNT match or a hidden possible id of 9 or more digits.
+  const cueLine = lines.findIndex((l) => BANK_CUE.test(l.text) || hasLabel(l.text, 'BANK_ACCOUNT'));
+  const accountFound = matches.some((m) => m.type === 'BANK_ACCOUNT'
+    || (m.type === 'POSSIBLE_ID' && digitCount(m.wordIndexes.map((i) => words[i].text).join('')) >= MIN_RUN_DIGITS));
+  if (cueLine >= 0 && !accountFound) reasons.push(`bank_details_without_account:${cueLine}`);
 
   return { gstinWordIndexes: [...gstinWords], matches, uncertain: reasons.length > 0, uncertainReasons: reasons };
 }

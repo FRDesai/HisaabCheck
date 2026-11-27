@@ -44,9 +44,10 @@ const MOBILE = /(?<!\d)(?:\(\+?91\)[\s-]?|\+?91[\s-]?|0)?\(?[6-9]\d{4}\)?[\s,-]?
 const LANDLINE = /\b0\d{2,4}[\s-]?\d{3,4}[\s-]?\d{4}\b/g;
 /**
  * A landline with its STD code in brackets, matched with or without a label: ( [ { | open, ) ] } | close (spaces
- * inside allowed), one of the two may be lost by OCR, and the leading 0 may be read as O.
+ * inside allowed, except after a | that opens: "| 0402 | 123456" is a table row), one of the two may be lost by OCR,
+ * and the leading 0 may be read as O.
  */
-const PAREN_LANDLINE = /(?:[([{|]\s?[0O]\d{2,4}\s?[)\]}|]?|(?<!\d)[0O]\d{2,4}\s?[)\]}|])[\s-]?\d(?:[\s-]?\d){5,7}(?!\d)/g;
+const PAREN_LANDLINE = /(?:[([{]\s?[0O]\d{2,4}\s?[)\]}|]?|\|[0O]\d{2,4}[)\]}|]?|(?<!\d)[0O]\d{2,4}(?:\s?[)\]}]|\|))[\s-]?\d(?:[\s-]?\d){5,7}(?!\d)/g;
 /** An STD code without its 0, in both brackets: a phone only on a phone-labelled line or when it makes 10 digits in all. */
 const PAREN_NO_ZERO_LANDLINE = /[([{|]\s?[1-9]\d{1,3}\s?[)\]}|][\s-]?\d(?:[\s-]?\d){5,7}(?!\d)/g;
 const NATIONAL_NUMBER_DIGITS = 10;

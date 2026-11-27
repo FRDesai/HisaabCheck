@@ -173,5 +173,6 @@
   {"name": "hsn in brackets next to an amount stays visible", "lines": ["Rice (1006) 1250000"], "types": [], "gstinWords": 0, "uncertain": false},
   {"name": "bracketed landline with spaces inside the brackets", "lines": ["Office ( 080 ) 2345 6789"], "types": ["PHONE"], "gstinWords": 0, "uncertain": false},
   {"name": "an amount after an IFSC is not joined to it", "lines": ["NEFT 09372140 2659670744 IDIB0069888 45430.00"], "types": ["POSSIBLE_ID", "IFSC"], "gstinWords": 0, "uncertain": false},
-  {"name": "invoice number with a 0-led hyphen group is not taken for a landline (it is still a long run)", "lines": ["Invoice No 0026-1234567"], "types": ["POSSIBLE_ID"], "gstinWords": 0, "uncertain": false}
+  {"name": "invoice number with a 0-led hyphen group is not taken for a landline (it is still a long run)", "lines": ["Invoice No 0026-1234567"], "types": ["POSSIBLE_ID"], "gstinWords": 0, "uncertain": false},
+  {"name": "table pipes around a 0-led hsn code stay visible", "lines": ["| 0402 | 123456 | 2,500.00"], "types": [], "gstinWords": 0, "uncertain": false}
 ]

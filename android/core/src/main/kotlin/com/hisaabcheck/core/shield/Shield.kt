@@ -67,11 +67,12 @@ private val LANDLINE = Regex("${JS_B}0$D{2,4}$JS_S_OR_HYPHEN?$D{3,4}$JS_S_OR_HYP
 
 /**
  * A landline with its STD code in brackets, matched with or without a label: ( [ { | open, ) ] } | close (spaces
- * inside allowed), one of the two may be lost by OCR, and the leading 0 may be read as O.
+ * inside allowed, except after a | that opens: "| 0402 | 123456" is a table row), one of the two may be lost by OCR,
+ * and the leading 0 may be read as O.
  * (In a Java character class [ and ] are escaped; JavaScript reads them literally there.)
  */
 private val PAREN_LANDLINE = Regex(
-    "(?:[(\\[{|]$JS_S?[0O]$D{2,4}$JS_S?[)\\]}|]?|(?<!$D)[0O]$D{2,4}$JS_S?[)\\]}|])" +
+    "(?:[(\\[{]$JS_S?[0O]$D{2,4}$JS_S?[)\\]}|]?|\\|[0O]$D{2,4}[)\\]}|]?|(?<!$D)[0O]$D{2,4}(?:$JS_S?[)\\]}]|\\|))" +
         "$JS_S_OR_HYPHEN?$D(?:$JS_S_OR_HYPHEN?$D){5,7}(?!$D)",
 )
 

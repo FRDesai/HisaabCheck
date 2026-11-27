@@ -47,7 +47,7 @@
     },
     {
       "path": "web/src/core/shield/shield.ts",
-      "sha256": "75e70cf1f0c9e46fb5500a86011ca5be9764a9611fbd8fe7c88a1dc424be39b4"
+      "sha256": "fca829cd9c02a93a2839c24545b06a8e67a68aad303ff906da1872ca089315ca"
     },
     {
       "path": "web/src/core/shield/verhoeff.ts",

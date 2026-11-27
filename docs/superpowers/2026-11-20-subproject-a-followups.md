@@ -3,6 +3,7 @@
 State at 2026-11-20, branch `feat/subproject-a`, head `1bf704b`.
 Verified here: 211 unit tests, 14 Firestore rules tests (emulator), production build.
 Not verified: anything against a real Firebase project or in Chrome. Nothing is deployed.
+Update 2026-11-27: the web app has since been run against local emulators (Auth, Firestore, Storage) in headless Chrome. That run used the emulators only (no real Firebase project) and found a bank-account number sent unhidden after OCR misread its label (fixed); no record of its full scope is kept in this file. It did not cover a real Firebase project, the cloud read, the on-device AI, a real bill photo or the deploy; the checks below are still open. Current counts, at head `e09f353` of `feat/subproject-c`: 449 web unit tests in 36 files and 88 rules tests (the 211 and 14 above are from 2026-11-20).
 
 ## Check first against real Firebase and Chrome (in this order)
 

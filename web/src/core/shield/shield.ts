@@ -464,7 +464,8 @@ export function runShield(words: OcrWord[], consentOcrThreshold: number): Shield
   // Bank details with no account found: OCR may have dropped the account's row (it does, on bank and payment tables).
   // A bank cue is an account label or a BANK_CUE word (an IFSC alone is not one: it is often printed without an account);
   // an account is a BANK_ACCOUNT match or a hidden possible id of 9 or more digits.
-  const cueLine = lines.findIndex((l) => BANK_CUE.test(l.text) || hasLabel(l.text, 'BANK_ACCOUNT'));
+  // (lines can have holes where OCR returned no words for a line number: skip them, as forEach does.)
+  const cueLine = lines.findIndex((l) => l !== undefined && (BANK_CUE.test(l.text) || hasLabel(l.text, 'BANK_ACCOUNT')));
   const accountFound = matches.some((m) => m.type === 'BANK_ACCOUNT'
     || (m.type === 'POSSIBLE_ID' && digitCount(m.wordIndexes.map((i) => words[i].text).join('')) >= MIN_RUN_DIGITS));
   if (cueLine >= 0 && !accountFound) reasons.push(`bank_details_without_account:${cueLine}`);
